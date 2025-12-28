@@ -1,0 +1,19 @@
+{
+  "name": "openai-conversation-chat",
+  "version": "1.0.0",
+  "description": "Therapeutic patient persona chat leveraging OpenAI Conversations API.",
+  "type": "module",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "nodemon server/index.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "openai": "^4.59.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  }
+}

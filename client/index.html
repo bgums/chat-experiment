@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Therapeutic Patient Chat</title>
+  <link rel="stylesheet" href="./styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js" defer></script>
+  <script src="./app.js" type="module" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="app-header">
+      <h1>סימולציית טיפול</h1>
+      <p class="app-subtitle">המטופל/ת מוכנ/ה לטיפול של היום.</p>
+    </header>
+
+    <main class="chat-window" id="chat-window" aria-live="polite"></main>
+
+    <form class="input-bar" id="chat-form">
+      <textarea id="message-input" rows="3" placeholder="הקלידו הודעה למטופל..." required></textarea>
+      <button type="submit" id="send-button">שלח</button>
+    </form>
+  </div>
+</body>
+</html>
