@@ -1,0 +1,21 @@
+{
+  "key": "demographics",
+  "title": "שאלון רקע",
+  "intro": "אפשר לערוך, להסיר או לשכפל שאלות כרצונכם.",
+  "items": [
+    { "id": "age", "type": "number", "prompt": "גיל", "required": false },
+    { "id": "gender", "type": "single", "prompt": "מין/מגדר", "options": ["אישה", "גבר", "לא בינארי", "אחר", "מעדיף/ה לא לומר"], "required": false },
+    { "id": "education", "type": "single", "prompt": "השכלה גבוהה", "options": ["ללא", "תואר ראשון", "תואר שני", "דוקטורט", "אחר"], "required": false },
+    { "id": "relationship", "type": "single", "prompt": "מצב משפחתי", "options": ["רווק/ה", "נשוי/אה", "במערכת יחסים", "גרוש/ה", "אלמן/ה", "אחר"], "required": false },
+    { "id": "languages", "type": "multi", "prompt": "שפות בהן אתם מרגישים נוח", "options": ["עברית", "אנגלית", "ערבית", "רוסית", "אחר"], "required": false },
+    { "id": "therapy_experience", "type": "likert", "prompt": "ניסיון קודם בטיפול נפשי", "scale": [1, 5], "labels": { "1": "אין כלל", "5": "ניסיון רב" }, "required": false },
+    { "id": "physical_health", "type": "likert", "prompt": "בריאות פיזית כללית", "scale": [1, 5], "labels": { "1": "נמוכה מאוד", "5": "גבוהה מאוד" }, "required": false },
+    { "id": "mental_health", "type": "likert", "prompt": "בריאות נפשית כללית", "scale": [1, 5], "labels": { "1": "נמוכה מאוד", "5": "גבוהה מאוד" }, "required": false },
+    { "id": "tech_comfort", "type": "likert", "prompt": "מידת הנוחות עם טכנולוגיה", "scale": [1, 5], "labels": { "1": "לא נוח בכלל", "5": "נוח מאוד" }, "required": false },
+    { "id": "internet_access", "type": "single", "prompt": "גישה לאינטרנט בבית", "options": ["קבועה", "מזדמנת", "אין"], "required": false },
+    { "id": "preferred_contact", "type": "single", "prompt": "אופן יצירת קשר מועדף", "options": ["אימייל", "טלפון", "וואטסאפ", "אחר"], "required": false },
+    { "id": "stress_level", "type": "likert", "prompt": "מידת לחץ כללית בשבוע האחרון", "scale": [1, 5], "labels": { "1": "מאוד נמוך", "5": "מאוד גבוה" }, "required": false },
+    { "id": "open_notes", "type": "text", "prompt": "האם יש דבר מה שתרצה/י לשתף לפני תחילת המפגש?", "required": false },
+    { "id": "time_zone", "type": "text", "prompt": "באיזו עיר/אזור זמן את/ה נמצא/ת?", "required": false }
+  ]
+}

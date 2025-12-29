@@ -1,0 +1,35 @@
+{
+  "defaultTotalSessions": 4,
+  "sessions": [
+    {
+      "session": 1,
+      "label": "מפגש ראשון",
+      "steps": [
+        { "type": "form", "key": "consent" },
+        { "type": "form", "key": "demographics" },
+        { "type": "chat" }
+      ]
+    },
+    {
+      "session": 2,
+      "label": "מפגש שני",
+      "steps": [
+        { "type": "chat" }
+      ]
+    },
+    {
+      "session": 3,
+      "label": "מפגש שלישי",
+      "steps": [
+        { "type": "chat" }
+      ]
+    },
+    {
+      "session": 4,
+      "label": "מפגש רביעי",
+      "steps": [
+        { "type": "chat" }
+      ]
+    }
+  ]
+}

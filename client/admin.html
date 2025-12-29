@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin Panel</title>
+  <link rel="stylesheet" href="./styles.css" />
+  <script src="./admin.js" type="module" defer></script>
+  <style>
+    body { direction: rtl; }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="app-header">
+      <div>
+        <p class="eyebrow">ממשק מנהל</p>
+        <h1>פאנל מחקר</h1>
+        <p class="app-subtitle">יצירת הזמנות ומעקב אחר סטטוס משתתפים.</p>
+      </div>
+      <div class="session-badge">גישה מאובטחת</div>
+    </header>
+
+    <main class="layout layout-single">
+      <section class="panel admin" id="admin-section">
+        <div class="panel-header">
+          <div>
+            <h2>ניהול משתתפים</h2>
+            <p class="muted">יצירת קישורי הזמנה ומעקב סטטוס.</p>
+          </div>
+        </div>
+
+        <form id="invite-form" class="inline-form">
+          <button type="submit">צור הזמנה</button>
+        </form>
+
+        <div id="invite-result" class="card muted"></div>
+
+        <div class="table" id="participants-table"></div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

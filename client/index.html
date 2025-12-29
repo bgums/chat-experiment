@@ -4,24 +4,29 @@
   <meta charset="UTF-8" />
   <meta http-equiv="X-UA-Compatible" content="IE=edge" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Therapeutic Patient Chat</title>
+  <title>חלון ניסוי מטופל</title>
   <link rel="stylesheet" href="./styles.css" />
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js" defer></script>
   <script src="./app.js" type="module" defer></script>
 </head>
 <body>
   <div class="app-shell">
+
     <header class="app-header">
-      <h1>סימולציית טיפול</h1>
-      <p class="app-subtitle">המטופל/ת מוכנ/ה לטיפול של היום.</p>
+      <div class="session-badge" id="session-label">ממתין לקישור</div>
     </header>
 
-    <main class="chat-window" id="chat-window" aria-live="polite"></main>
-
-    <form class="input-bar" id="chat-form">
-      <textarea id="message-input" rows="3" placeholder="הקלידו הודעה למטופל..." required></textarea>
-      <button type="submit" id="send-button">שלח</button>
-    </form>
+    <main class="layout layout-single">
+      <section class="panel" id="participant-panel">
+        <div class="step-container" id="step-container">
+          <div class="placeholder">המתינו לקישור או פנו לחוקר לקבלת הזמנה.</div>
+        </div>
+      </section>
+      <div class="step-nav-row" id="step-nav-row">
+        <button id="step-back" class="arrow-btn" title="הקודם" style="display:none">&#8594;</button>
+        <button id="step-forward" class="arrow-btn" title="הבא" style="display:none">&#8592;</button>
+      </div>
+    </main>
   </div>
 </body>
 </html>
