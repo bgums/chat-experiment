@@ -1,3 +1,67 @@
+.module-card {
+  direction: rtl;
+}
+
+.module-list {
+  padding-right: 18px;
+}
+
+.module-dialogue {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.dialogue-row {
+  background: rgba(61, 90, 241, 0.05);
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+
+.dialogue-role {
+  font-weight: 700;
+  margin-left: 6px;
+}
+
+.module-note {
+  background: rgba(61, 90, 241, 0.08);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-top: 10px;
+}
+
+.module-question {
+  font-weight: 700;
+}
+
+.module-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.module-option-btn {
+  width: 100%;
+  text-align: right;
+}
+
+.module-option-disabled {
+  opacity: 0.8;
+}
+
+.module-feedback {
+  margin-top: 8px;
+  font-weight: 600;
+}
+
+.module-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 12px;
+}
 .step-nav-row {
   display: flex;
   flex-direction: row;

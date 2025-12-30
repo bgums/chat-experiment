@@ -78,6 +78,7 @@ function adminAuth(req, res, next) {
 
 const sessionFlowPath = path.join(__dirname, "config", "sessionFlow.json");
 const formsDir = path.join(__dirname, "forms");
+const modulesDir = path.join(__dirname, "modules");
 
 function loadSessionFlow() {
   try {
@@ -105,6 +106,16 @@ function loadFormDefinition(formKey) {
     return null;
   }
   const raw = fs.readFileSync(formPath, "utf-8");
+  return JSON.parse(raw);
+}
+
+function loadModuleDefinition(moduleKey) {
+  const safeKey = `${moduleKey}`.replace(/[^a-zA-Z0-9_-]/g, "");
+  const modulePath = path.join(modulesDir, `${safeKey}.json`);
+  if (!fs.existsSync(modulePath)) {
+    return null;
+  }
+  const raw = fs.readFileSync(modulePath, "utf-8");
   return JSON.parse(raw);
 }
 
@@ -162,6 +173,14 @@ app.get("/api/forms/:formKey", (req, res) => {
     return res.status(404).json({ error: "Form not found." });
   }
   res.json(form);
+});
+
+app.get("/api/modules/:moduleKey", (req, res) => {
+  const moduleDef = loadModuleDefinition(req.params.moduleKey);
+  if (!moduleDef) {
+    return res.status(404).json({ error: "Module not found." });
+  }
+  res.json(moduleDef);
 });
 
 app.get("/api/session/:token", async (req, res) => {

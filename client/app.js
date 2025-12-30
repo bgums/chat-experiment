@@ -15,6 +15,10 @@ let messageInput = null;
 let sendButton = null;
 let completeButton = null;
 
+let moduleState = null;
+// Persist nextBtnRef across renders to avoid ReferenceError
+let nextBtnRef = null;
+
 const state = {
   token,
   session: null,
@@ -344,7 +348,189 @@ async function renderCurrentStep() {
     return;
   }
 
+  if (step.type === "module") {
+    const response = await fetch(`/api/modules/${step.key}`);
+    if (!response.ok) {
+      renderPlaceholder("לא נמצא מודול עבור שלב זה.");
+      return;
+    }
+    const moduleDef = await response.json();
+    renderModule(moduleDef);
+    return;
+  }
+
   renderPlaceholder("סוג שלב לא מוכר בקובץ התצורה.");
+}
+
+function renderModule(moduleDef) {
+  moduleState = {
+    def: moduleDef,
+    chapterIndex: 0,
+    pageIndex: 0,
+    answered: false
+  };
+  drawModulePage();
+}
+
+function drawModulePage() {
+  if (!moduleState?.def) return;
+  const { def, chapterIndex, pageIndex } = moduleState;
+  const chapter = def.chapters[chapterIndex];
+  const page = chapter.pages[pageIndex];
+  // Always recalculate navigation state for current chapter/page
+  const lastChapter = chapterIndex === def.chapters.length - 1;
+  const lastPageInChapter = pageIndex === chapter.pages.length - 1;
+
+  stepContainer.innerHTML = "";
+
+  const card = document.createElement("div");
+  card.className = "step-card module-card";
+  card.dir = "rtl";
+
+  const header = document.createElement("div");
+  header.className = "module-header";
+  const title = document.createElement("h3");
+  title.textContent = def.title;
+  const subtitle = document.createElement("p");
+  subtitle.className = "muted";
+  subtitle.textContent = `פרק ${chapterIndex + 1}/${def.chapters.length} · עמוד ${pageIndex + 1}/${chapter.pages.length}`;
+  header.appendChild(title);
+  header.appendChild(subtitle);
+  card.appendChild(header);
+
+  const pageTitle = document.createElement("h4");
+  pageTitle.textContent = page.title;
+  card.appendChild(pageTitle);
+
+  if (page.type === "info") {
+    if (page.body && page.body.length) {
+      page.body.forEach((p) => {
+        const para = document.createElement("p");
+        para.textContent = p;
+        card.appendChild(para);
+      });
+    }
+    if (page.bullets && page.bullets.length) {
+      const list = document.createElement("ul");
+      list.className = "module-list";
+      page.bullets.forEach((b) => {
+        const li = document.createElement("li");
+        li.textContent = b;
+        list.appendChild(li);
+      });
+      card.appendChild(list);
+    }
+    if (page.dialogue && page.dialogue.length) {
+      const dlg = document.createElement("div");
+      dlg.className = "module-dialogue";
+      page.dialogue.forEach((line) => {
+        const row = document.createElement("div");
+        row.className = "dialogue-row";
+        row.innerHTML = `<span class="dialogue-role">${line.role}:</span> <span>${line.text}</span>`;
+        dlg.appendChild(row);
+      });
+      card.appendChild(dlg);
+    }
+    if (page.note) {
+      const note = document.createElement("div");
+      note.className = "module-note";
+      note.textContent = page.note;
+      card.appendChild(note);
+    }
+  }
+
+  if (page.type === "quiz") {
+    const question = document.createElement("p");
+    question.className = "module-question";
+    question.textContent = page.question;
+    card.appendChild(question);
+
+    const optionsWrap = document.createElement("div");
+    optionsWrap.className = "module-options";
+    const feedback = document.createElement("div");
+    feedback.className = "module-feedback muted";
+    feedback.style.display = "none";
+
+    nextBtnRef = null;
+
+    page.options.forEach((opt, idx) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "ghost-button module-option-btn";
+      btn.textContent = opt;
+      btn.addEventListener("click", () => {
+        const isCorrect = idx === page.correctIndex;
+        moduleState.answered = true;
+        feedback.style.display = "block";
+        feedback.textContent = isCorrect ? "נכון" : "לא נכון";
+        if (page.explanation) {
+          feedback.textContent += ` – ${page.explanation}`;
+        }
+        optionsWrap.querySelectorAll("button").forEach((b) => {
+          b.disabled = true;
+          b.classList.add("module-option-disabled");
+        });
+        if (nextBtnRef) {
+          nextBtnRef.disabled = false;
+        }
+      });
+      optionsWrap.appendChild(btn);
+    });
+
+    card.appendChild(optionsWrap);
+    card.appendChild(feedback);
+  }
+
+  const footer = document.createElement("div");
+  footer.className = "module-footer";
+
+  const prevBtn = document.createElement("button");
+  prevBtn.className = "ghost-button";
+  prevBtn.textContent = "הקודם";
+  prevBtn.disabled = chapterIndex === 0 && pageIndex === 0;
+  prevBtn.addEventListener("click", () => {
+    moduleState.answered = false;
+    if (pageIndex > 0) {
+      moduleState.pageIndex -= 1;
+    } else if (chapterIndex > 0) {
+      moduleState.chapterIndex -= 1;
+      moduleState.pageIndex = moduleState.def.chapters[moduleState.chapterIndex].pages.length - 1;
+    }
+    drawModulePage();
+  });
+
+  const nextBtn = document.createElement("button");
+  nextBtn.className = "ghost-button";
+  const isLast = lastChapter && lastPageInChapter;
+  nextBtn.textContent = isLast ? "סיום המודול" : "הבא";
+  if (page.type === "quiz" && !moduleState.answered) {
+    nextBtn.disabled = true;
+  }
+  if (page.type === "quiz") {
+    nextBtnRef = nextBtn;
+  }
+
+  nextBtn.addEventListener("click", () => {
+    if (page.type === "quiz" && !moduleState.answered) return;
+    moduleState.answered = false;
+    if (!lastPageInChapter) {
+      moduleState.pageIndex += 1;
+    } else if (!lastChapter) {
+      moduleState.chapterIndex += 1;
+      moduleState.pageIndex = 0;
+    } else {
+      state.currentStepIndex += 1;
+      renderCurrentStep();
+      return;
+    }
+    drawModulePage();
+  });
+
+  footer.appendChild(prevBtn);
+  footer.appendChild(nextBtn);
+  card.appendChild(footer);
+
+  stepContainer.appendChild(card);
 }
 // Step navigation event listeners
 stepBackBtn?.addEventListener("click", (e) => {
