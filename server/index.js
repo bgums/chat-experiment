@@ -10,12 +10,14 @@ import { extractTextFromResponse } from "./utils/extractText.js";
 import {
   createInvite,
   getSessionByToken,
+  getParticipantByCode,
   listParticipants,
   markSessionStarted,
   markSessionCompleted,
   saveConversationId,
   saveFormResponse,
   saveMessage,
+  listMessagesByParticipant,
   updateParticipantStatus
 } from "./db.js";
 
@@ -108,7 +110,7 @@ function loadFormDefinition(formKey) {
 
 app.use("/api/admin", adminAuth);
 
-app.post("/api/admin/invite", async (_req, res) => {
+app.post("/api/admin/invite", async (req, res) => {
   try {
     const flow = loadSessionFlow();
     const totalSessions = flow.defaultTotalSessions || 2;
@@ -135,6 +137,22 @@ app.get("/api/admin/participants", async (_req, res) => {
   } catch (error) {
     console.error("Failed to list participants", error);
     res.status(500).json({ error: error?.message || "Could not load participants." });
+  }
+});
+
+app.get("/api/admin/participant/:participantCode/messages", async (req, res) => {
+  try {
+    const { participantCode } = req.params;
+    const participant = await getParticipantByCode(participantCode);
+    if (!participant) {
+      return res.status(404).json({ error: "Participant not found." });
+    }
+
+    const messages = await listMessagesByParticipant(participant.id);
+    return res.json({ participantCode, messages });
+  } catch (error) {
+    console.error("Failed to load messages", error);
+    res.status(500).json({ error: error?.message || "Could not load messages." });
   }
 });
 

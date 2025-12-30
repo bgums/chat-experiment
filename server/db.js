@@ -154,6 +154,20 @@ export function listParticipants() {
   });
 }
 
+export function getParticipantByCode(participantCode) {
+  const db = getDb();
+  return new Promise((resolve, reject) => {
+    db.get(
+      "SELECT id, participant_code AS participantCode, total_sessions AS totalSessions, status, created_at AS createdAt FROM participants WHERE participant_code = ?",
+      [participantCode],
+      (err, row) => {
+        if (err) return reject(err);
+        resolve(row || null);
+      }
+    );
+  });
+}
+
 export function getSessionByToken(sessionToken) {
   const db = getDb();
   const query = `
@@ -264,6 +278,30 @@ export function listMessages({ participantId, sessionNumber }) {
 
   return new Promise((resolve, reject) => {
     db.all(query, [participantId, sessionNumber], (err, rows) => {
+      if (err) return reject(err);
+      resolve(rows || []);
+    });
+  });
+}
+
+export function listMessagesByParticipant(participantId) {
+  const db = getDb();
+  const query = `
+    SELECT m.session_number AS sessionNumber,
+           m.role,
+           m.content,
+           m.created_at AS createdAt,
+           s.conversation_id AS conversationId,
+           s.started_at AS conversationCreatedAt
+    FROM messages m
+    LEFT JOIN sessions s
+      ON s.participant_id = m.participant_id AND s.session_number = m.session_number
+    WHERE m.participant_id = ?
+    ORDER BY m.created_at ASC, m.id ASC
+  `;
+
+  return new Promise((resolve, reject) => {
+    db.all(query, [participantId], (err, rows) => {
       if (err) return reject(err);
       resolve(rows || []);
     });

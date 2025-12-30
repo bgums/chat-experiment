@@ -475,6 +475,95 @@ body {
   border-bottom: none;
 }
 
+.modal[hidden] {
+  display: none;
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 999;
+}
+
+.modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.modal-dialog {
+  position: relative;
+  background: #fff;
+  border-radius: 16px;
+  padding: 18px;
+  width: min(900px, 95vw);
+  max-height: 80vh;
+  overflow: hidden;
+  box-shadow: var(--shadow-soft);
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  z-index: 1;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+}
+
+.modal-body {
+  overflow: auto;
+  max-height: 60vh;
+}
+
+.messages-table table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.messages-table th,
+.messages-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  text-align: right;
+}
+
+.messages-table th {
+  background: rgba(61, 90, 241, 0.06);
+  position: sticky;
+  top: 0;
+}
+
+.messages-table tr:last-child td {
+  border-bottom: none;
+}
+
+.column-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+  font-size: 0.95rem;
+}
+
+.column-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(61, 90, 241, 0.04);
+}
+
 @media (max-width: 640px) {
   .app-shell {
     padding: 20px;
