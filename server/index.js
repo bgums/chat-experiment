@@ -14,12 +14,20 @@ import {
   listParticipants,
   markSessionStarted,
   markSessionCompleted,
-  saveConversationId,
   saveFormResponse,
-  saveMessage,
+  savePersonaMessage,
   listMessagesByParticipant,
-  updateParticipantStatus
+  updateParticipantStatus,
+  getSessionPersonas,
+  saveSessionPersonaConversationId,
+  markSessionPersonaFirstMessage,
+  markSessionPersonaMidPromptSent,
+  markSessionPersonaFeedbackSent,
+  getSessionPersona,
+  listMessagesBySessionPersona,
+  saveConversationId
 } from "./db.js";
+import { ensureSessionPersonas, buildPersonaPrompt } from "./utils/personaLoader.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -37,22 +45,13 @@ if (!FILE_ID) {
   throw new Error("OPENAI_FILE_ID is required. Set it in your environment before starting the server.");
 }
 
-const instructionsPath = path.join(__dirname, "instructions", "patient_persona.md");
-const rawPersonaPointer = fs.readFileSync(instructionsPath, "utf-8");
-// Allow the pointer file to specify an alternate persona by listing its filename.
-const pointerLine = rawPersonaPointer
-  .split(/\r?\n/)
-  .map((line) => line.trim())
-  .find((line) => line.length > 0 && !line.startsWith("#"));
+const chatInstructionsPath = path.join(__dirname, "instructions", "chat_instructions.txt");
+const midChatInstructionsPath = path.join(__dirname, "instructions", "mid_chat_instructions.txt");
+const feedbackInstructionsPath = path.join(__dirname, "instructions", "feedback_instructions.txt");
 
-let personaInstructions = rawPersonaPointer;
-
-if (pointerLine) {
-  const referencedPersonaPath = path.join(__dirname, "instructions", pointerLine);
-  if (fs.existsSync(referencedPersonaPath) && fs.statSync(referencedPersonaPath).isFile()) {
-    personaInstructions = fs.readFileSync(referencedPersonaPath, "utf-8");
-  }
-}
+const chatInstructions = fs.readFileSync(chatInstructionsPath, "utf-8");
+const midChatInstructions = fs.readFileSync(midChatInstructionsPath, "utf-8");
+const feedbackInstructions = fs.readFileSync(feedbackInstructionsPath, "utf-8");
 
 const app = express();
 app.use(cors());
@@ -97,6 +96,32 @@ function getSessionSteps(sessionNumber) {
     return match.steps;
   }
   return [{ type: "chat" }];
+}
+
+function combineChatPrompt(personaObj, includeMid = false) {
+  const personaPrompt = buildPersonaPrompt(personaObj);
+  const parts = [personaPrompt, chatInstructions];
+  if (includeMid) parts.push(midChatInstructions);
+  return parts.filter(Boolean).join("\n\n---\n\n");
+}
+
+function combineFeedbackPrompt(personaObj) {
+  const personaPrompt = buildPersonaPrompt(personaObj);
+  return [personaPrompt, feedbackInstructions].filter(Boolean).join("\n\n---\n\n");
+}
+
+function withPersonaDisplay(personaJson) {
+  try {
+    const parsed = typeof personaJson === "string" ? JSON.parse(personaJson) : personaJson;
+    return parsed || {};
+  } catch (error) {
+    return {};
+  }
+}
+
+function logPromptEvent(label, payload) {
+  const safePayload = JSON.stringify(payload, null, 2);
+  console.log(`[prompt-log] ${label}: ${safePayload}`);
 }
 
 function loadFormDefinition(formKey) {
@@ -193,9 +218,46 @@ app.get("/api/session/:token", async (req, res) => {
 
     const flow = loadSessionFlow();
     const match = (flow.sessions || []).find((s) => Number(s.session) === Number(session.sessionNumber));
-    const steps = getSessionSteps(session.sessionNumber);
+    const configuredSteps = getSessionSteps(session.sessionNumber);
+
+    const personas = await ensureSessionPersonas({
+      sessionId: session.sessionId,
+      participantId: session.participantId,
+      sessionNumber: session.sessionNumber,
+      participantCode: session.participantCode
+    });
+
+    const persistedPersonas = await getSessionPersonas(session.sessionId);
 
     await markSessionStarted(session.sessionId);
+
+    const personaSteps = (persistedPersonas || []).flatMap((personaRow) => {
+      const personaData = withPersonaDisplay(personaRow.personaJson);
+      const personaMeta = {
+        sessionPersonaId: personaRow.id,
+        conversationId: personaRow.conversationId || null,
+        firstMessageAt: personaRow.firstMessageAt,
+        midPromptSent: Boolean(personaRow.midPromptSent),
+        feedbackPromptSent: Boolean(personaRow.feedbackPromptSent),
+        persona: {
+          csvId: personaRow.personaCsvId,
+          name: personaRow.personaName,
+          age: personaData.age || null,
+          background: personaData.background || "",
+          difficulty: personaData.difficulty || "",
+          gender: personaData.gender || "",
+          diagnosis: personaData.diagnosis || ""
+        }
+      };
+      return [
+        { type: "chat", kind: "persona", order: personaRow.personaOrder, ...personaMeta },
+        { type: "feedback", kind: "persona_feedback", order: personaRow.personaOrder + 0.5, ...personaMeta }
+      ];
+    });
+
+    const nonChatSteps = configuredSteps.filter((step) => step.type !== "chat").map((step) => ({ ...step }));
+    const orderedPersonaSteps = personaSteps.sort((a, b) => (a.order || 0) - (b.order || 0));
+    const steps = [...nonChatSteps, ...orderedPersonaSteps];
 
     res.json({
       participantCode: session.participantCode,
@@ -203,7 +265,7 @@ app.get("/api/session/:token", async (req, res) => {
       status: session.sessionStatus,
       sessionLabel: match?.label || null,
       steps,
-      conversationId: session.conversationId,
+      conversationId: null,
       totalSessions: session.totalSessions
     });
   } catch (error) {
@@ -245,10 +307,14 @@ app.post("/api/session/:token/forms/:formKey", async (req, res) => {
 app.post("/api/session/:token/message", async (req, res) => {
   try {
     const sessionToken = req.params.token;
-    const { message } = req.body || {};
+    const { message, sessionPersonaId } = req.body || {};
 
     if (!message || typeof message !== "string") {
       return res.status(400).json({ error: "Message is required." });
+    }
+
+    if (!sessionPersonaId) {
+      return res.status(400).json({ error: "sessionPersonaId is required." });
     }
 
     const session = await getSessionByToken(sessionToken);
@@ -256,19 +322,56 @@ app.post("/api/session/:token/message", async (req, res) => {
       return res.status(404).json({ error: "Session not found." });
     }
 
+    const personaRecord = await getSessionPersona(sessionPersonaId);
+    if (!personaRecord || personaRecord.sessionId !== session.sessionId) {
+      return res.status(400).json({ error: "Persona not linked to this session." });
+    }
+
     await markSessionStarted(session.sessionId);
 
-    let conversationId = session.conversationId;
+    const personaData = withPersonaDisplay(personaRecord.personaJson);
+
+    let conversationId = personaRecord.conversationId;
     if (!conversationId) {
       const conversation = await createConversation();
       conversationId = conversation.id;
-      await saveConversationId(session.sessionId, conversationId);
+      await saveSessionPersonaConversationId(sessionPersonaId, conversationId);
     }
+
+    const now = new Date();
+    const isoNow = now.toISOString();
+    const firstMessageAt = personaRecord.firstMessageAt || isoNow;
+    if (!personaRecord.firstMessageAt) {
+      await markSessionPersonaFirstMessage(sessionPersonaId, isoNow);
+    }
+
+    const elapsedMs = now.getTime() - new Date(firstMessageAt).getTime();
+    const elapsedMinutes = elapsedMs / 60000;
+
+    if (elapsedMinutes >= 7) {
+      return res.status(400).json({ error: "זמן השיחה הסתיים (7 דקות)." });
+    }
+
+    const shouldSendMid = !personaRecord.midPromptSent && elapsedMinutes >= 4.5;
+    if (shouldSendMid) {
+      await markSessionPersonaMidPromptSent(sessionPersonaId);
+    }
+
+    const instructions = combineChatPrompt(personaData, shouldSendMid || personaRecord.midPromptSent);
+
+    logPromptEvent("chat", {
+      sessionNumber: session.sessionNumber,
+      participantCode: session.participantCode,
+      sessionPersonaId,
+      includeMid: shouldSendMid || personaRecord.midPromptSent,
+      conversationId,
+      instructionsPreview: instructions.slice(0, 1200)
+    });
 
     const response = await createResponse({
       model: MODEL_ID,
       conversation: conversationId,
-      instructions: personaInstructions,
+      instructions,
       tools: [
         {
           type: "file_search",
@@ -287,12 +390,28 @@ app.post("/api/session/:token/message", async (req, res) => {
 
     const assistantText = extractTextFromResponse(response);
 
-    await saveMessage({ participantId: session.participantId, sessionNumber: session.sessionNumber, role: "user", content: message });
-    await saveMessage({ participantId: session.participantId, sessionNumber: session.sessionNumber, role: "assistant", content: assistantText });
+    await savePersonaMessage({
+      participantId: session.participantId,
+      sessionNumber: session.sessionNumber,
+      role: "user",
+      content: message,
+      sessionPersonaId,
+      conversationId
+    });
+    await savePersonaMessage({
+      participantId: session.participantId,
+      sessionNumber: session.sessionNumber,
+      role: "assistant",
+      content: assistantText,
+      sessionPersonaId,
+      conversationId
+    });
 
     return res.json({
       conversationId,
-      response: assistantText
+      response: assistantText,
+      firstMessageAt,
+      midPromptSent: shouldSendMid || personaRecord.midPromptSent
     });
   } catch (error) {
     console.error("OpenAI request failed", error);
@@ -320,7 +439,7 @@ app.post("/api/message", async (req, res) => {
     const response = await createResponse({
       model: MODEL_ID,
       conversation: conversationId,
-      instructions: personaInstructions,
+      instructions: chatInstructions,
       tools: [
         {
           type: "file_search",
@@ -370,6 +489,152 @@ app.post("/api/session/:token/complete", async (req, res) => {
   } catch (error) {
     console.error("Failed to mark session complete", error);
     res.status(500).json({ error: error?.message || "Could not complete session." });
+  }
+});
+
+app.get("/api/session/:token/persona/:sessionPersonaId/messages", async (req, res) => {
+  try {
+    const { token, sessionPersonaId } = req.params;
+    const session = await getSessionByToken(token);
+    if (!session) {
+      return res.status(404).json({ error: "Session not found." });
+    }
+
+    const personaRecord = await getSessionPersona(Number(sessionPersonaId));
+    if (!personaRecord || personaRecord.sessionId !== session.sessionId) {
+      return res.status(404).json({ error: "Persona not found for this session." });
+    }
+
+    const messages = await listMessagesBySessionPersona(sessionPersonaId);
+    return res.json({
+      messages,
+      conversationId: personaRecord.conversationId || null,
+      firstMessageAt: personaRecord.firstMessageAt,
+      midPromptSent: Boolean(personaRecord.midPromptSent),
+      feedbackPromptSent: Boolean(personaRecord.feedbackPromptSent)
+    });
+  } catch (error) {
+    console.error("Failed to load persona messages", error);
+    return res.status(500).json({ error: error?.message || "Could not load messages." });
+  }
+});
+
+app.post("/api/session/:token/persona/:sessionPersonaId/mid-prime", async (req, res) => {
+  try {
+    const { token, sessionPersonaId } = req.params;
+    const session = await getSessionByToken(token);
+    if (!session) {
+      return res.status(404).json({ error: "Session not found." });
+    }
+    const personaRecord = await getSessionPersona(Number(sessionPersonaId));
+    if (!personaRecord || personaRecord.sessionId !== session.sessionId) {
+      return res.status(404).json({ error: "Persona not found for this session." });
+    }
+
+    if (!personaRecord.firstMessageAt) {
+      return res.status(400).json({ error: "Chat has not started yet." });
+    }
+
+    const elapsedMs = Date.now() - new Date(personaRecord.firstMessageAt).getTime();
+    const elapsedMinutes = elapsedMs / 60000;
+    if (elapsedMinutes < 4.5) {
+      return res.status(400).json({ error: "Mid-chat instructions not due yet." });
+    }
+
+    if (!personaRecord.midPromptSent) {
+      await markSessionPersonaMidPromptSent(sessionPersonaId);
+    }
+
+    logPromptEvent("mid-prime", {
+      sessionNumber: session.sessionNumber,
+      sessionPersonaId,
+      participantCode: session.participantCode,
+      elapsedMinutes
+    });
+
+    return res.json({ ok: true, midPromptSent: true });
+  } catch (error) {
+    console.error("Failed to prime mid instructions", error);
+    return res.status(500).json({ error: error?.message || "Could not prime mid instructions." });
+  }
+});
+
+app.post("/api/session/:token/persona/:sessionPersonaId/feedback", async (req, res) => {
+  try {
+    const { token, sessionPersonaId } = req.params;
+    const session = await getSessionByToken(token);
+    if (!session) {
+      return res.status(404).json({ error: "Session not found." });
+    }
+
+    const personaRecord = await getSessionPersona(Number(sessionPersonaId));
+    if (!personaRecord || personaRecord.sessionId !== session.sessionId) {
+      return res.status(404).json({ error: "Persona not found for this session." });
+    }
+
+    const personaData = withPersonaDisplay(personaRecord.personaJson);
+    let conversationId = personaRecord.conversationId;
+    if (!conversationId) {
+      const conversation = await createConversation();
+      conversationId = conversation.id;
+      await saveSessionPersonaConversationId(sessionPersonaId, conversationId);
+    }
+
+    const existingMessages = await listMessagesBySessionPersona(sessionPersonaId);
+    const existingFeedback = existingMessages.reverse().find((m) => m.role === "assistant_feedback");
+    if (existingFeedback) {
+      return res.json({ response: existingFeedback.content, conversationId });
+    }
+
+    const instructions = combineFeedbackPrompt(personaData);
+    logPromptEvent("feedback", {
+      sessionNumber: session.sessionNumber,
+      participantCode: session.participantCode,
+      sessionPersonaId,
+      conversationId,
+      instructionsPreview: instructions.slice(0, 1200)
+    });
+
+    const response = await createResponse({
+      model: MODEL_ID,
+      conversation: conversationId,
+      instructions,
+      tools: [
+        {
+          type: "file_search",
+          vector_store_ids: [VECTOR_STORE_ID]
+        }
+      ],
+      input: [
+        {
+          role: "user",
+          content: [
+            { type: "input_text", text: "סכם פידבק לפי ההנחיות." }
+          ]
+        }
+      ]
+    });
+
+    const assistantText = extractTextFromResponse(response);
+
+    await savePersonaMessage({
+      participantId: session.participantId,
+      sessionNumber: session.sessionNumber,
+      role: "assistant_feedback",
+      content: assistantText,
+      sessionPersonaId,
+      conversationId
+    });
+    await markSessionPersonaFeedbackSent(sessionPersonaId);
+
+    return res.json({
+      conversationId,
+      response: assistantText
+    });
+  } catch (error) {
+    console.error("Failed to generate feedback", error);
+    const message = error?.response?.data?.error?.message || error?.message || "Unknown error";
+    return res.status(500).json({ error: message });
   }
 });
 

@@ -14,6 +14,12 @@ let chatForm = null;
 let messageInput = null;
 let sendButton = null;
 let completeButton = null;
+let timerBadge = null;
+let personaHeader = null;
+let chatTimerInterval = null;
+let currentChatStep = null;
+let chatLocked = false;
+let midPrimeTimeout = null;
 
 let moduleState = null;
 // Persist nextBtnRef across renders to avoid ReferenceError
@@ -24,7 +30,8 @@ const state = {
   session: null,
   steps: [],
   currentStepIndex: 0,
-  conversationId: null
+  conversationId: null,
+  personas: {}
 };
 
 const createMessageElement = (role, markdown) => {
@@ -44,6 +51,79 @@ const appendMessage = (role, markdown) => {
   chatWindow.appendChild(messageElement);
   chatWindow.scrollTop = chatWindow.scrollHeight;
   return messageElement;
+};
+
+const formatDuration = (ms) => {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, "0");
+  const seconds = String(totalSeconds % 60).padStart(2, "0");
+  return `${minutes}:${seconds}`;
+};
+
+const stopChatTimer = () => {
+  if (chatTimerInterval) {
+    clearInterval(chatTimerInterval);
+    chatTimerInterval = null;
+  }
+};
+
+const setChatLockState = (locked, reasonText = "") => {
+  chatLocked = locked;
+  if (messageInput) messageInput.disabled = locked;
+  if (sendButton) {
+    sendButton.disabled = locked;
+    sendButton.textContent = locked ? "הזמן נגמר" : "שלח";
+  }
+  if (timerBadge) {
+    timerBadge.classList.toggle("timer-expired", locked);
+    timerBadge.title = locked && reasonText ? reasonText : "";
+  }
+};
+
+const startChatTimer = (startIso) => {
+  stopChatTimer();
+  if (midPrimeTimeout) {
+    clearTimeout(midPrimeTimeout);
+    midPrimeTimeout = null;
+  }
+  if (!startIso) return;
+  const startMs = new Date(startIso).getTime();
+  const limitMs = 7 * 60 * 1000;
+  const midMs = 4.5 * 60 * 1000;
+  chatTimerInterval = setInterval(() => {
+    const now = Date.now();
+    const elapsed = now - startMs;
+    if (timerBadge) {
+      timerBadge.textContent = `זמן שיחה: ${formatDuration(elapsed)}`;
+    }
+    if (elapsed >= limitMs) {
+      setChatLockState(true, "חלפו 7 דקות");
+      stopChatTimer();
+    }
+    // mid-chat timer hint (client only, server enforces and logs)
+    if (elapsed >= midMs && timerBadge) {
+      timerBadge.classList.add("timer-mid");
+    }
+  }, 1000);
+};
+
+const scheduleMidPrime = (startIso, sessionPersonaId) => {
+  if (midPrimeTimeout) {
+    clearTimeout(midPrimeTimeout);
+    midPrimeTimeout = null;
+  }
+  if (!startIso || !sessionPersonaId) return;
+  const startMs = new Date(startIso).getTime();
+  const midMs = 4.5 * 60 * 1000;
+  const now = Date.now();
+  const delay = Math.max(0, midMs - (now - startMs));
+  midPrimeTimeout = setTimeout(async () => {
+    try {
+      await fetch(`/api/session/${state.token}/persona/${sessionPersonaId}/mid-prime`, { method: "POST" });
+    } catch (error) {
+      console.warn("mid-prime failed", error);
+    }
+  }, delay);
 };
 
 const setLoadingState = (isLoading) => {
@@ -230,22 +310,56 @@ function renderForm(formDef) {
   });
 }
 
-function renderChat() {
+async function renderChat(step) {
+  currentChatStep = step;
+  stopChatTimer();
+  if (midPrimeTimeout) {
+    clearTimeout(midPrimeTimeout);
+    midPrimeTimeout = null;
+  }
+  setChatLockState(false);
+
+  const persona = step?.persona || {};
   stepContainer.innerHTML = "";
 
-  const chatSection = document.createElement("section");
-  chatSection.className = "chat-section";
+  const chatSectionEl = document.createElement("section");
+  chatSectionEl.className = "chat-section";
 
   const intro = document.createElement("div");
   intro.classList.add("step-card");
-  intro.innerHTML = `<h3>שיחת טיפול</h3><p class="muted">המשיכו את השיחה עם המטופל/ת. תוכלו לחזור לכאן בכל עת דרך אותו קישור.</p>`;
-  chatSection.appendChild(intro);
+  intro.innerHTML = `<h3>שיחת טיפול</h3><p class="muted">שיחה עם המטופל/ת הנוכחי/ת. ההודעה הראשונה מתחילה את הטיימר.</p>`;
+  chatSectionEl.appendChild(intro);
+
+  const metaRow = document.createElement("div");
+  metaRow.className = "persona-meta";
+  personaHeader = document.createElement("div");
+  personaHeader.className = "persona-ribbon";
+  personaHeader.innerHTML = `<span class="persona-name">${persona.name || "מטופל/ת"}</span><span class="persona-age">${persona.age ? `${persona.age}` : ""}</span>`;
+  metaRow.appendChild(personaHeader);
+  timerBadge = document.createElement("div");
+  timerBadge.className = "timer-badge";
+  timerBadge.textContent = "זמן שיחה: 00:00";
+  metaRow.appendChild(timerBadge);
+  chatSectionEl.appendChild(metaRow);
 
   chatWindow = document.createElement("div");
   chatWindow.className = "chat-window";
   chatWindow.id = "chat-window";
   chatWindow.setAttribute("aria-live", "polite");
-  chatSection.appendChild(chatWindow);
+
+  const backgroundCard = document.createElement("div");
+  backgroundCard.className = "persona-background";
+  const backgroundTitle = document.createElement("div");
+  backgroundTitle.className = "persona-background-title";
+  backgroundTitle.textContent = "רקע קצר";
+  const backgroundBody = document.createElement("div");
+  backgroundBody.className = "persona-background-body";
+  backgroundBody.textContent = persona.background || "";
+  backgroundCard.appendChild(backgroundTitle);
+  backgroundCard.appendChild(backgroundBody);
+  chatWindow.appendChild(backgroundCard);
+
+  chatSectionEl.appendChild(chatWindow);
 
   chatForm = document.createElement("form");
   chatForm.className = "input-bar";
@@ -262,24 +376,50 @@ function renderChat() {
   sendButton.textContent = "שלח";
   chatForm.appendChild(messageInput);
   chatForm.appendChild(sendButton);
-  chatSection.appendChild(chatForm);
+  chatSectionEl.appendChild(chatForm);
 
   completeButton = document.createElement("button");
   completeButton.className = "ghost-button";
   completeButton.id = "complete-session";
   completeButton.textContent = "סיום המפגש";
   completeButton.hidden = false;
-  chatSection.appendChild(completeButton);
+  chatSectionEl.appendChild(completeButton);
 
-  stepContainer.appendChild(chatSection);
+  stepContainer.appendChild(chatSectionEl);
+
+  // Load history
+  try {
+    const history = await fetchPersonaMessages(step.sessionPersonaId);
+    const historyMessages = history.messages || [];
+    const chatMessages = historyMessages.filter((m) => m.role === "user" || m.role === "assistant");
+    chatMessages.forEach((m) => {
+      appendMessage(m.role === "user" ? "user" : "assistant", m.content || "");
+    });
+
+    const firstStart = history.firstMessageAt || null;
+    if (firstStart) {
+      startChatTimer(firstStart);
+      scheduleMidPrime(firstStart, step.sessionPersonaId);
+      const elapsed = Date.now() - new Date(firstStart).getTime();
+      if (elapsed >= 7 * 60 * 1000) {
+        setChatLockState(true, "חלפו 7 דקות");
+      }
+    }
+    if (history.midPromptSent && timerBadge) {
+      timerBadge.classList.add("timer-mid");
+    }
+  } catch (error) {
+    appendMessage("assistant", "**שגיאה בטעינת היסטוריית הצ'אט.**");
+  }
 
   // Attach event listeners now that elements exist
   chatForm.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const userMessage = messageInput.value.trim();
-    if (!userMessage) return;
+    const rawValue = messageInput.value;
+    const userMessage = rawValue && rawValue.trim().length ? rawValue : "";
+    if (!userMessage || chatLocked) return;
     messageInput.value = "";
-    await sendChatMessage(userMessage);
+    await sendChatMessage(userMessage, step);
   });
 
   messageInput.addEventListener("keydown", (event) => {
@@ -311,8 +451,58 @@ function renderChat() {
   setStepIndicator();
 }
 
+async function renderFeedback(step) {
+  stopChatTimer();
+  if (midPrimeTimeout) {
+    clearTimeout(midPrimeTimeout);
+    midPrimeTimeout = null;
+  }
+  setChatLockState(false);
+  currentChatStep = step;
+
+  const persona = step?.persona || {};
+  stepContainer.innerHTML = "";
+
+  const card = document.createElement("div");
+  card.className = "step-card feedback-card";
+
+  const title = document.createElement("h3");
+  title.textContent = `פידבק למפגש עם ${persona.name || "מטופל"}`;
+  card.appendChild(title);
+
+  const subtitle = document.createElement("p");
+  subtitle.className = "muted";
+  subtitle.textContent = "המסך הזה מציג את הפידבק מהמטופל. אין אפשרות לשלוח הודעות.";
+  card.appendChild(subtitle);
+
+  const feedbackBody = document.createElement("div");
+  feedbackBody.className = "feedback-body";
+  feedbackBody.textContent = "טוען פידבק...";
+  card.appendChild(feedbackBody);
+
+  stepContainer.appendChild(card);
+
+  try {
+    const response = await fetch(`/api/session/${state.token}/persona/${step.sessionPersonaId}/feedback`, { method: "POST" });
+    if (!response.ok) {
+      const err = await response.json();
+      throw new Error(err?.error || "Feedback request failed");
+    }
+    const data = await response.json();
+    feedbackBody.innerHTML = window.marked.parse(data.response || "");
+  } catch (error) {
+    feedbackBody.textContent = `שגיאה בטעינת הפידבק: ${error.message}`;
+  }
+}
+
 async function renderCurrentStep() {
   setStepIndicator();
+  stopChatTimer();
+  if (midPrimeTimeout) {
+    clearTimeout(midPrimeTimeout);
+    midPrimeTimeout = null;
+  }
+  setChatLockState(false);
   // No need to hide chatSection, chatWindow, or chatForm; these are now created dynamically only for the chat step.
 
   const step = state.steps[state.currentStepIndex];
@@ -343,7 +533,7 @@ async function renderCurrentStep() {
   }
 
   if (step.type === "chat") {
-    renderChat();
+    await renderChat(step);
     if (completeButton) completeButton.hidden = false;
     return;
   }
@@ -356,6 +546,11 @@ async function renderCurrentStep() {
     }
     const moduleDef = await response.json();
     renderModule(moduleDef);
+    return;
+  }
+
+  if (step.type === "feedback") {
+    await renderFeedback(step);
     return;
   }
 
@@ -580,7 +775,20 @@ async function loadSession() {
   }
 }
 
-async function sendChatMessage(userMessage) {
+async function fetchPersonaMessages(sessionPersonaId) {
+  const response = await fetch(`/api/session/${state.token}/persona/${sessionPersonaId}/messages`);
+  if (!response.ok) {
+    return { messages: [], conversationId: null, firstMessageAt: null, midPromptSent: false, feedbackPromptSent: false };
+  }
+  return response.json();
+}
+
+async function sendChatMessage(userMessage, step) {
+  if (!step?.sessionPersonaId) {
+    appendMessage("assistant", "**לא נמצא מזהה שיחה עבור המטופל הנוכחי.**");
+    return;
+  }
+
   appendMessage("user", userMessage);
   const typingIndicator = appendMessage("assistant", "*המטופל/ת כותב/ת תשובה...*");
   setLoadingState(true);
@@ -591,7 +799,7 @@ async function sendChatMessage(userMessage) {
       headers: {
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({ message: userMessage })
+      body: JSON.stringify({ message: userMessage, sessionPersonaId: step.sessionPersonaId })
     });
 
     if (!response.ok) {
@@ -602,14 +810,26 @@ async function sendChatMessage(userMessage) {
     const data = await response.json();
     state.conversationId = data.conversationId;
 
+    if (data.firstMessageAt) {
+      startChatTimer(data.firstMessageAt);
+      scheduleMidPrime(data.firstMessageAt, step.sessionPersonaId);
+    }
+    if (data.midPromptSent && timerBadge) {
+      timerBadge.classList.add("timer-mid");
+    }
+
     typingIndicator.remove();
     appendMessage("assistant", data.response || "_No response received._");
   } catch (error) {
     typingIndicator.remove();
     appendMessage("assistant", `**שגיאה בשליחה.**\n\n_${error.message}_`);
+    if (error.message && error.message.includes("7 דקות")) {
+      setChatLockState(true, error.message);
+      stopChatTimer();
+    }
   } finally {
     setLoadingState(false);
-    messageInput.focus();
+    if (messageInput) messageInput.focus();
   }
 }
 

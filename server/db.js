@@ -11,6 +11,21 @@ const DB_PATH = process.env.SQLITE_PATH || path.join(__dirname, "data", "experim
 
 let dbInstance = null;
 
+function ensureColumnExists(db, table, column, definition) {
+  return new Promise((resolve, reject) => {
+    db.all(`PRAGMA table_info(${table})`, [], (err, rows) => {
+      if (err) return reject(err);
+      const exists = (rows || []).some((row) => row.name === column);
+      if (exists) return resolve(true);
+
+      db.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`, [], (alterErr) => {
+        if (alterErr) return reject(alterErr);
+        resolve(true);
+      });
+    });
+  });
+}
+
 function ensureDirectoryExists(filePath) {
   const dir = path.dirname(filePath);
   if (!fs.existsSync(dir)) {
@@ -53,6 +68,8 @@ function createDatabase() {
         session_number INTEGER NOT NULL,
         role TEXT NOT NULL,
         content TEXT NOT NULL,
+        session_persona_id INTEGER,
+        conversation_id TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(participant_id) REFERENCES participants(id)
       )
@@ -69,6 +86,36 @@ function createDatabase() {
         FOREIGN KEY(participant_id) REFERENCES participants(id)
       )
     `);
+
+    db.run(`
+      CREATE TABLE IF NOT EXISTS session_personas (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id INTEGER NOT NULL,
+        participant_id INTEGER NOT NULL,
+        session_number INTEGER NOT NULL,
+        persona_csv_id INTEGER NOT NULL,
+        persona_order INTEGER NOT NULL,
+        persona_name TEXT NOT NULL,
+        persona_json TEXT NOT NULL,
+        conversation_id TEXT,
+        first_message_at TEXT,
+        mid_prompt_sent INTEGER DEFAULT 0,
+        feedback_prompt_sent INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(session_id) REFERENCES sessions(id),
+        FOREIGN KEY(participant_id) REFERENCES participants(id)
+      )
+    `);
+  });
+
+  // Lightweight migrations for existing databases
+  db.serialize(() => {
+    ensureColumnExists(db, "messages", "session_persona_id", "INTEGER").catch((err) =>
+      console.error("Failed to add session_persona_id column", err)
+    );
+    ensureColumnExists(db, "messages", "conversation_id", "TEXT").catch((err) =>
+      console.error("Failed to add conversation_id column", err)
+    );
   });
   return db;
 }
@@ -242,8 +289,22 @@ export function saveMessage({ participantId, sessionNumber, role, content }) {
   const db = getDb();
   return new Promise((resolve, reject) => {
     db.run(
-      "INSERT INTO messages (participant_id, session_number, role, content) VALUES (?, ?, ?, ?)",
-      [participantId, sessionNumber, role, content],
+      "INSERT INTO messages (participant_id, session_number, role, content, session_persona_id, conversation_id) VALUES (?, ?, ?, ?, ?, ?)",
+      [participantId, sessionNumber, role, content, null, null],
+      function onInsert(err) {
+        if (err) return reject(err);
+        resolve(this.lastID);
+      }
+    );
+  });
+}
+
+export function savePersonaMessage({ participantId, sessionNumber, role, content, sessionPersonaId, conversationId }) {
+  const db = getDb();
+  return new Promise((resolve, reject) => {
+    db.run(
+      "INSERT INTO messages (participant_id, session_number, role, content, session_persona_id, conversation_id) VALUES (?, ?, ?, ?, ?, ?)",
+      [participantId, sessionNumber, role, content, sessionPersonaId || null, conversationId || null],
       function onInsert(err) {
         if (err) return reject(err);
         resolve(this.lastID);
@@ -281,6 +342,142 @@ export function listMessages({ participantId, sessionNumber }) {
       if (err) return reject(err);
       resolve(rows || []);
     });
+  });
+}
+
+export function listMessagesBySessionPersona(sessionPersonaId) {
+  const db = getDb();
+  const query = `
+    SELECT role, content, created_at
+    FROM messages
+    WHERE session_persona_id = ?
+    ORDER BY id ASC
+  `;
+
+  return new Promise((resolve, reject) => {
+    db.all(query, [sessionPersonaId], (err, rows) => {
+      if (err) return reject(err);
+      resolve(rows || []);
+    });
+  });
+}
+
+export function createSessionPersonas({ sessionId, participantId, sessionNumber, personas }) {
+  const db = getDb();
+  return new Promise((resolve, reject) => {
+    const stmt = db.prepare(
+      `INSERT INTO session_personas (session_id, participant_id, session_number, persona_csv_id, persona_order, persona_name, persona_json) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    );
+    const created = [];
+    personas.forEach((persona) => {
+      stmt.run(
+        sessionId,
+        participantId,
+        sessionNumber,
+        persona.personaCsvId,
+        persona.order,
+        persona.name,
+        JSON.stringify(persona.data || {}),
+        function onInsert(err) {
+          if (err) return reject(err);
+          created.push({ id: this.lastID, ...persona });
+        }
+      );
+    });
+    stmt.finalize((err) => {
+      if (err) return reject(err);
+      resolve(created);
+    });
+  });
+}
+
+export function getSessionPersonas(sessionId) {
+  const db = getDb();
+  return new Promise((resolve, reject) => {
+    db.all(
+      `SELECT id, session_id AS sessionId, participant_id AS participantId, session_number AS sessionNumber, persona_csv_id AS personaCsvId, persona_order AS personaOrder, persona_name AS personaName, persona_json AS personaJson, conversation_id AS conversationId, first_message_at AS firstMessageAt, mid_prompt_sent AS midPromptSent, feedback_prompt_sent AS feedbackPromptSent
+       FROM session_personas
+       WHERE session_id = ?
+       ORDER BY persona_order ASC`,
+      [sessionId],
+      (err, rows) => {
+        if (err) return reject(err);
+        resolve(rows || []);
+      }
+    );
+  });
+}
+
+export function getSessionPersona(sessionPersonaId) {
+  const db = getDb();
+  return new Promise((resolve, reject) => {
+    db.get(
+      `SELECT id, session_id AS sessionId, participant_id AS participantId, session_number AS sessionNumber, persona_csv_id AS personaCsvId, persona_order AS personaOrder, persona_name AS personaName, persona_json AS personaJson, conversation_id AS conversationId, first_message_at AS firstMessageAt, mid_prompt_sent AS midPromptSent, feedback_prompt_sent AS feedbackPromptSent
+       FROM session_personas
+       WHERE id = ?
+       LIMIT 1`,
+      [sessionPersonaId],
+      (err, row) => {
+        if (err) return reject(err);
+        resolve(row || null);
+      }
+    );
+  });
+}
+
+export function saveSessionPersonaConversationId(sessionPersonaId, conversationId) {
+  const db = getDb();
+  return new Promise((resolve, reject) => {
+    db.run(
+      "UPDATE session_personas SET conversation_id = ? WHERE id = ?",
+      [conversationId, sessionPersonaId],
+      function onUpdate(err) {
+        if (err) return reject(err);
+        resolve(true);
+      }
+    );
+  });
+}
+
+export function markSessionPersonaFirstMessage(sessionPersonaId, timestampIso) {
+  const db = getDb();
+  return new Promise((resolve, reject) => {
+    db.run(
+      "UPDATE session_personas SET first_message_at = COALESCE(first_message_at, ?) WHERE id = ?",
+      [timestampIso, sessionPersonaId],
+      function onUpdate(err) {
+        if (err) return reject(err);
+        resolve(true);
+      }
+    );
+  });
+}
+
+export function markSessionPersonaMidPromptSent(sessionPersonaId) {
+  const db = getDb();
+  return new Promise((resolve, reject) => {
+    db.run(
+      "UPDATE session_personas SET mid_prompt_sent = 1 WHERE id = ?",
+      [sessionPersonaId],
+      function onUpdate(err) {
+        if (err) return reject(err);
+        resolve(true);
+      }
+    );
+  });
+}
+
+export function markSessionPersonaFeedbackSent(sessionPersonaId) {
+  const db = getDb();
+  return new Promise((resolve, reject) => {
+    db.run(
+      "UPDATE session_personas SET feedback_prompt_sent = 1 WHERE id = ?",
+      [sessionPersonaId],
+      function onUpdate(err) {
+        if (err) return reject(err);
+        resolve(true);
+      }
+    );
   });
 }
 
