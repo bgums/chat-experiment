@@ -167,36 +167,79 @@ export function createInvite({ totalSessions = 2 } = {}) {
 export function listParticipants() {
   const db = getDb();
   const query = `
-    SELECT p.id, p.participant_code, p.status, p.total_sessions, p.created_at,
-           SUM(CASE WHEN s.status = 'completed' THEN 1 ELSE 0 END) AS completed_sessions,
-           GROUP_CONCAT(s.session_token || ':' || s.session_number, '|') AS session_tokens
+    SELECT p.id AS participant_id,
+      p.participant_code,
+      p.status,
+      p.total_sessions,
+      p.created_at,
+      s.id AS session_id,
+      s.session_number,
+      s.session_token,
+      s.status AS session_status,
+      s.started_at,
+      s.completed_at
     FROM participants p
     LEFT JOIN sessions s ON s.participant_id = p.id
-    GROUP BY p.id
-    ORDER BY p.created_at DESC
+    ORDER BY p.created_at DESC, s.session_number ASC
   `;
 
   return new Promise((resolve, reject) => {
     db.all(query, [], (err, rows) => {
       if (err) return reject(err);
 
-      const participants = rows.map((row) => ({
-        id: row.id,
-        participantCode: row.participant_code,
-        status: row.status,
-        createdAt: row.created_at,
-        totalSessions: row.total_sessions,
-        completedSessions: row.completed_sessions || 0,
-        sessions: (row.session_tokens || "")
-          .split("|")
-          .filter(Boolean)
-          .map((value) => {
-            const [token, sessionNumber] = value.split(":");
-            return { sessionNumber: Number(sessionNumber), token };
-          })
-      }));
+      const participantsById = new Map();
+      rows.forEach((row) => {
+        if (!participantsById.has(row.participant_id)) {
+          participantsById.set(row.participant_id, {
+            id: row.participant_id,
+            participantCode: row.participant_code,
+            status: row.status,
+            createdAt: row.created_at,
+            totalSessions: row.total_sessions,
+            completedSessions: 0,
+            sessions: []
+          });
+        }
 
-      resolve(participants);
+        if (row.session_id) {
+          const participant = participantsById.get(row.participant_id);
+          const sessionStatus = row.session_status || "pending";
+          if (sessionStatus === "completed") {
+            participant.completedSessions += 1;
+          }
+          participant.sessions.push({
+            sessionId: row.session_id,
+            sessionNumber: row.session_number,
+            token: row.session_token,
+            status: sessionStatus,
+            startedAt: row.started_at,
+            completedAt: row.completed_at
+          });
+        }
+      });
+
+      resolve(Array.from(participantsById.values()));
+    });
+  });
+}
+
+export function listSessionsByParticipant(participantId) {
+  const db = getDb();
+  const query = `
+    SELECT id AS sessionId,
+           session_number AS sessionNumber,
+           status,
+           started_at AS startedAt,
+           completed_at AS completedAt
+    FROM sessions
+    WHERE participant_id = ?
+    ORDER BY session_number ASC
+  `;
+
+  return new Promise((resolve, reject) => {
+    db.all(query, [participantId], (err, rows) => {
+      if (err) return reject(err);
+      resolve(rows || []);
     });
   });
 }

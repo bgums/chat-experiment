@@ -110,7 +110,7 @@ export async function ensureSessionPersonas({ sessionId, participantId, sessionN
   }
 
   const seed = participantCode || `${sessionId}-${sessionNumber}`;
-  const randomized = shuffle(candidates, seed).slice(0, 4);
+  const randomized = shuffle(candidates, seed).slice(0, 2);
   const personas = randomized.map((p, idx) => ({
     personaCsvId: Number(p.patient_id || idx + 1),
     order: idx + 1,

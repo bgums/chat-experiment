@@ -25,7 +25,8 @@ import {
   markSessionPersonaFeedbackSent,
   getSessionPersona,
   listMessagesBySessionPersona,
-  saveConversationId
+  saveConversationId,
+  listSessionsByParticipant
 } from "./db.js";
 import { ensureSessionPersonas, buildPersonaPrompt } from "./utils/personaLoader.js";
 
@@ -52,6 +53,13 @@ const feedbackInstructionsPath = path.join(__dirname, "instructions", "feedback_
 const chatInstructions = fs.readFileSync(chatInstructionsPath, "utf-8");
 const midChatInstructions = fs.readFileSync(midChatInstructionsPath, "utf-8");
 const feedbackInstructions = fs.readFileSync(feedbackInstructionsPath, "utf-8");
+
+const CHAT_DURATION_MINUTES = 10;
+const CHAT_DURATION_MS = CHAT_DURATION_MINUTES * 60 * 1000;
+const MID_PROMPT_MINUTES = 4.5;
+const MID_PROMPT_MS = MID_PROMPT_MINUTES * 60 * 1000;
+const FEEDBACK_MIN_PARTICIPANT_MESSAGES = 4;
+const FEEDBACK_FALLBACK_TEXT = "feedback could not be provided as the chat did not meet the requirements";
 
 const app = express();
 app.use(cors());
@@ -122,6 +130,27 @@ function withPersonaDisplay(personaJson) {
 function logPromptEvent(label, payload) {
   const safePayload = JSON.stringify(payload, null, 2);
   console.log(`[prompt-log] ${label}: ${safePayload}`);
+}
+
+async function maybeMarkSessionCompleted(session) {
+  if (!session?.sessionId) return false;
+  const personas = await getSessionPersonas(session.sessionId);
+  if (!personas || !personas.length) return false;
+
+  const now = Date.now();
+  const allChatsCompleted = personas.every((persona) => {
+    if (!persona.firstMessageAt) return false;
+    const elapsed = now - new Date(persona.firstMessageAt).getTime();
+    return elapsed >= CHAT_DURATION_MS;
+  });
+
+  if (!allChatsCompleted) return false;
+
+  await markSessionCompleted(session.sessionId);
+  const sessions = await listSessionsByParticipant(session.participantId);
+  const allSessionsCompleted = sessions.length > 0 && sessions.every((s) => s.status === "completed" || s.completedAt);
+  await updateParticipantStatus(session.participantId, allSessionsCompleted ? "completed" : "in_progress");
+  return true;
 }
 
 function loadFormDefinition(formKey) {
@@ -230,6 +259,7 @@ app.get("/api/session/:token", async (req, res) => {
     const persistedPersonas = await getSessionPersonas(session.sessionId);
 
     await markSessionStarted(session.sessionId);
+    await maybeMarkSessionCompleted(session);
 
     const personaSteps = (persistedPersonas || []).flatMap((personaRow) => {
       const personaData = withPersonaDisplay(personaRow.personaJson);
@@ -348,11 +378,12 @@ app.post("/api/session/:token/message", async (req, res) => {
     const elapsedMs = now.getTime() - new Date(firstMessageAt).getTime();
     const elapsedMinutes = elapsedMs / 60000;
 
-    if (elapsedMinutes >= 7) {
-      return res.status(400).json({ error: "זמן השיחה הסתיים (7 דקות)." });
+    if (elapsedMs >= CHAT_DURATION_MS) {
+      await maybeMarkSessionCompleted(session);
+      return res.status(400).json({ error: `זמן השיחה הסתיים (${CHAT_DURATION_MINUTES} דקות).` });
     }
 
-    const shouldSendMid = !personaRecord.midPromptSent && elapsedMinutes >= 4.5;
+    const shouldSendMid = !personaRecord.midPromptSent && elapsedMs >= MID_PROMPT_MS;
     if (shouldSendMid) {
       await markSessionPersonaMidPromptSent(sessionPersonaId);
     }
@@ -476,15 +507,10 @@ app.post("/api/session/:token/complete", async (req, res) => {
     if (!session) {
       return res.status(404).json({ error: "Session not found." });
     }
-
-    await markSessionCompleted(session.sessionId);
-
-    if (session.sessionNumber >= session.totalSessions) {
-      await updateParticipantStatus(session.participantId, "completed");
-    } else {
-      await updateParticipantStatus(session.participantId, "in_progress");
+    const completed = await maybeMarkSessionCompleted(session);
+    if (!completed) {
+      return res.status(400).json({ error: "Session cannot be completed until all chats reach the time requirement." });
     }
-
     res.json({ ok: true });
   } catch (error) {
     console.error("Failed to mark session complete", error);
@@ -537,7 +563,7 @@ app.post("/api/session/:token/persona/:sessionPersonaId/mid-prime", async (req, 
 
     const elapsedMs = Date.now() - new Date(personaRecord.firstMessageAt).getTime();
     const elapsedMinutes = elapsedMs / 60000;
-    if (elapsedMinutes < 4.5) {
+    if (elapsedMs < MID_PROMPT_MS) {
       return res.status(400).json({ error: "Mid-chat instructions not due yet." });
     }
 
@@ -573,17 +599,44 @@ app.post("/api/session/:token/persona/:sessionPersonaId/feedback", async (req, r
     }
 
     const personaData = withPersonaDisplay(personaRecord.personaJson);
+    const existingMessages = await listMessagesBySessionPersona(sessionPersonaId);
+    const existingFeedback = [...existingMessages].reverse().find((m) => m.role === "assistant_feedback");
+    if (existingFeedback) {
+      return res.json({ response: existingFeedback.content, conversationId: personaRecord.conversationId || null });
+    }
+
+    const participantMessageCount = existingMessages.filter((m) => m.role === "user").length;
+    const hasFirstMessage = Boolean(personaRecord.firstMessageAt);
+    const elapsedMs = hasFirstMessage
+      ? Date.now() - new Date(personaRecord.firstMessageAt).getTime()
+      : 0;
+    const eligible = hasFirstMessage
+      && elapsedMs >= CHAT_DURATION_MS
+      && participantMessageCount >= FEEDBACK_MIN_PARTICIPANT_MESSAGES;
+
+    if (!eligible) {
+      await savePersonaMessage({
+        participantId: session.participantId,
+        sessionNumber: session.sessionNumber,
+        role: "assistant_feedback",
+        content: FEEDBACK_FALLBACK_TEXT,
+        sessionPersonaId,
+        conversationId: personaRecord.conversationId || null
+      });
+      await markSessionPersonaFeedbackSent(sessionPersonaId);
+      await maybeMarkSessionCompleted(session);
+      return res.json({
+        response: FEEDBACK_FALLBACK_TEXT,
+        conversationId: personaRecord.conversationId || null,
+        eligible: false
+      });
+    }
+
     let conversationId = personaRecord.conversationId;
     if (!conversationId) {
       const conversation = await createConversation();
       conversationId = conversation.id;
       await saveSessionPersonaConversationId(sessionPersonaId, conversationId);
-    }
-
-    const existingMessages = await listMessagesBySessionPersona(sessionPersonaId);
-    const existingFeedback = existingMessages.reverse().find((m) => m.role === "assistant_feedback");
-    if (existingFeedback) {
-      return res.json({ response: existingFeedback.content, conversationId });
     }
 
     const instructions = combineFeedbackPrompt(personaData);
@@ -626,10 +679,12 @@ app.post("/api/session/:token/persona/:sessionPersonaId/feedback", async (req, r
       conversationId
     });
     await markSessionPersonaFeedbackSent(sessionPersonaId);
+    await maybeMarkSessionCompleted(session);
 
     return res.json({
       conversationId,
-      response: assistantText
+      response: assistantText,
+      eligible: true
     });
   } catch (error) {
     console.error("Failed to generate feedback", error);

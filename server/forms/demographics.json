@@ -1,21 +1,16 @@
 {
   "key": "demographics",
   "title": "שאלון רקע",
-  "intro": "אפשר לערוך, להסיר או לשכפל שאלות כרצונכם.",
+  "intro": "אנא ענו כמיטב יכולתכם",
   "items": [
     { "id": "age", "type": "number", "prompt": "גיל", "required": false },
-    { "id": "gender", "type": "single", "prompt": "מין/מגדר", "options": ["אישה", "גבר", "לא בינארי", "אחר", "מעדיף/ה לא לומר"], "required": false },
-    { "id": "education", "type": "single", "prompt": "השכלה גבוהה", "options": ["ללא", "תואר ראשון", "תואר שני", "דוקטורט", "אחר"], "required": false },
-    { "id": "relationship", "type": "single", "prompt": "מצב משפחתי", "options": ["רווק/ה", "נשוי/אה", "במערכת יחסים", "גרוש/ה", "אלמן/ה", "אחר"], "required": false },
-    { "id": "languages", "type": "multi", "prompt": "שפות בהן אתם מרגישים נוח", "options": ["עברית", "אנגלית", "ערבית", "רוסית", "אחר"], "required": false },
-    { "id": "therapy_experience", "type": "likert", "prompt": "ניסיון קודם בטיפול נפשי", "scale": [1, 5], "labels": { "1": "אין כלל", "5": "ניסיון רב" }, "required": false },
-    { "id": "physical_health", "type": "likert", "prompt": "בריאות פיזית כללית", "scale": [1, 5], "labels": { "1": "נמוכה מאוד", "5": "גבוהה מאוד" }, "required": false },
-    { "id": "mental_health", "type": "likert", "prompt": "בריאות נפשית כללית", "scale": [1, 5], "labels": { "1": "נמוכה מאוד", "5": "גבוהה מאוד" }, "required": false },
-    { "id": "tech_comfort", "type": "likert", "prompt": "מידת הנוחות עם טכנולוגיה", "scale": [1, 5], "labels": { "1": "לא נוח בכלל", "5": "נוח מאוד" }, "required": false },
-    { "id": "internet_access", "type": "single", "prompt": "גישה לאינטרנט בבית", "options": ["קבועה", "מזדמנת", "אין"], "required": false },
-    { "id": "preferred_contact", "type": "single", "prompt": "אופן יצירת קשר מועדף", "options": ["אימייל", "טלפון", "וואטסאפ", "אחר"], "required": false },
-    { "id": "stress_level", "type": "likert", "prompt": "מידת לחץ כללית בשבוע האחרון", "scale": [1, 5], "labels": { "1": "מאוד נמוך", "5": "מאוד גבוה" }, "required": false },
-    { "id": "open_notes", "type": "text", "prompt": "האם יש דבר מה שתרצה/י לשתף לפני תחילת המפגש?", "required": false },
-    { "id": "time_zone", "type": "text", "prompt": "באיזו עיר/אזור זמן את/ה נמצא/ת?", "required": false }
-  ]
+    { "id": "gender", "type": "single", "prompt": "מהי הלשון המגדרית איתה את/ה מזדהה?", "options": ["את/היא", "אתה/הוא", "אתם/הם"], "required": false },
+    { "id": "education", "type": "single", "prompt": "מהי רמת ההשכלה שלך?", "options": ["תיכון", "סטודנט לתואר ראשון", "תואר ראשון","סטודנט לתואר שני","תואר שני ומעלה"], "required": false },
+    { "id": "relationship", "type": "single", "prompt": "מצב משפחתי", "options": ["רווק/ה", "נשוי/אה", "גרוש/ה", "אלמן/ה", "אחר"], "required": false },
+    { "id": "in_therapy", "type": "single", "prompt": "כמה שנים בחייך היית בטיפול פסיכולוגי?", "options": ["מעולם לא","פחות משנה", "1-2 שנים", "3-5 שנים", "יותר מ-5 שנים"], "required": false },
+    { "id": "therapist_experience", "type": "single", "prompt": "כמה שנות ניסיון יש לך כמטפל/ת?", "options": [ "מעולם לא טיפלתי","פחות משנה", "1-2 שנים", "3-5 שנים", "יותר מ-5 שנים"], "required": false },
+    { "id": "general_experience", "type": "single", "prompt": "כמה שנים יצא לך לעבוד עם אוכלוסיות קליניות שלא כחלק מטיפול פסיכולוגי?", "options": ["פחות משנה", "1-2 שנים", "3-5 שנים", "יותר מ-5 שנים", "מעולם לא"], "required": false },
+    { "id": "clinical_interest", "type": "likert", "prompt": "באיזו מידה עולם הפסיכולוגיה הקלינית והטיפול מעניין אותך?", "scale": [1, 5], "labels": { "1": "כלל לא", "5": "במידה רבה" }, "required": false },
+    { "id": "clinical_ambition", "type": "likert", "prompt": "האם את/ה שואפ/ת להיות מטפל/ת בהמשך חייך?", "scale": [1, 5], "labels": { "1": "כלל לא", "5": "במידה רבה" }, "required": false },
+    { "id": "open_notes", "type": "text", "prompt": "האם יש דבר מה שתרצה/י לשתף לפני תחילת המפגש?", "required": false }  ]
 }

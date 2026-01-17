@@ -13,7 +13,6 @@ let chatWindow = null;
 let chatForm = null;
 let messageInput = null;
 let sendButton = null;
-let completeButton = null;
 let timerBadge = null;
 let personaHeader = null;
 let chatTimerInterval = null;
@@ -33,6 +32,11 @@ const state = {
   conversationId: null,
   personas: {}
 };
+
+const CHAT_DURATION_MINUTES = 10;
+const CHAT_DURATION_MS = CHAT_DURATION_MINUTES * 60 * 1000;
+const MID_PROMPT_MINUTES = 4.5;
+const MID_PROMPT_MS = MID_PROMPT_MINUTES * 60 * 1000;
 
 const createMessageElement = (role, markdown) => {
   const wrapper = document.createElement("article");
@@ -78,6 +82,30 @@ const setChatLockState = (locked, reasonText = "") => {
     timerBadge.classList.toggle("timer-expired", locked);
     timerBadge.title = locked && reasonText ? reasonText : "";
   }
+  if (locked) {
+    updateStepNavigationVisibility(currentChatStep);
+  }
+};
+
+const isChatFinished = (step) => {
+  if (!step?.firstMessageAt) return false;
+  const elapsed = Date.now() - new Date(step.firstMessageAt).getTime();
+  return elapsed >= CHAT_DURATION_MS;
+};
+
+const updateStepNavigationVisibility = (step) => {
+  if (!stepBackBtn || !stepForwardBtn) return;
+  const isChatStep = step?.type === "chat";
+  const shouldHideForChat = isChatStep && !isChatFinished(step);
+  if (shouldHideForChat) {
+    stepBackBtn.style.display = "none";
+    stepForwardBtn.style.display = "none";
+    return;
+  }
+  stepBackBtn.style.display = state.currentStepIndex > 0 ? "" : "none";
+  stepForwardBtn.style.display = (state.steps && state.currentStepIndex < state.steps.length - 1) ? "" : "none";
+  stepBackBtn.disabled = state.currentStepIndex === 0;
+  stepForwardBtn.disabled = state.currentStepIndex >= state.steps.length - 1;
 };
 
 const startChatTimer = (startIso) => {
@@ -88,8 +116,8 @@ const startChatTimer = (startIso) => {
   }
   if (!startIso) return;
   const startMs = new Date(startIso).getTime();
-  const limitMs = 7 * 60 * 1000;
-  const midMs = 4.5 * 60 * 1000;
+  const limitMs = CHAT_DURATION_MS;
+  const midMs = MID_PROMPT_MS;
   chatTimerInterval = setInterval(() => {
     const now = Date.now();
     const elapsed = now - startMs;
@@ -97,7 +125,7 @@ const startChatTimer = (startIso) => {
       timerBadge.textContent = `זמן שיחה: ${formatDuration(elapsed)}`;
     }
     if (elapsed >= limitMs) {
-      setChatLockState(true, "חלפו 7 דקות");
+      setChatLockState(true, `חלפו ${CHAT_DURATION_MINUTES} דקות`);
       stopChatTimer();
     }
     // mid-chat timer hint (client only, server enforces and logs)
@@ -114,7 +142,7 @@ const scheduleMidPrime = (startIso, sessionPersonaId) => {
   }
   if (!startIso || !sessionPersonaId) return;
   const startMs = new Date(startIso).getTime();
-  const midMs = 4.5 * 60 * 1000;
+  const midMs = MID_PROMPT_MS;
   const now = Date.now();
   const delay = Math.max(0, midMs - (now - startMs));
   midPrimeTimeout = setTimeout(async () => {
@@ -378,13 +406,6 @@ async function renderChat(step) {
   chatForm.appendChild(sendButton);
   chatSectionEl.appendChild(chatForm);
 
-  completeButton = document.createElement("button");
-  completeButton.className = "ghost-button";
-  completeButton.id = "complete-session";
-  completeButton.textContent = "סיום המפגש";
-  completeButton.hidden = false;
-  chatSectionEl.appendChild(completeButton);
-
   stepContainer.appendChild(chatSectionEl);
 
   // Load history
@@ -398,13 +419,15 @@ async function renderChat(step) {
 
     const firstStart = history.firstMessageAt || null;
     if (firstStart) {
+      step.firstMessageAt = firstStart;
       startChatTimer(firstStart);
       scheduleMidPrime(firstStart, step.sessionPersonaId);
       const elapsed = Date.now() - new Date(firstStart).getTime();
-      if (elapsed >= 7 * 60 * 1000) {
-        setChatLockState(true, "חלפו 7 דקות");
+      if (elapsed >= CHAT_DURATION_MS) {
+        setChatLockState(true, `חלפו ${CHAT_DURATION_MINUTES} דקות`);
       }
     }
+    updateStepNavigationVisibility(step);
     if (history.midPromptSent && timerBadge) {
       timerBadge.classList.add("timer-mid");
     }
@@ -436,18 +459,6 @@ async function renderChat(step) {
     }
   });
 
-  completeButton.addEventListener("click", async () => {
-    completeButton.disabled = true;
-    try {
-      await fetch(`/api/session/${state.token}/complete`, { method: "POST" });
-      if (statusText) statusText.textContent = "המפגש נסגר בהצלחה. ניתן לסגור את העמוד.";
-      completeButton.textContent = "הושלם";
-    } catch (error) {
-      completeButton.disabled = false;
-      completeButton.textContent = "סיום המפגש";
-    }
-  });
-
   setStepIndicator();
 }
 
@@ -472,7 +483,7 @@ async function renderFeedback(step) {
 
   const subtitle = document.createElement("p");
   subtitle.className = "muted";
-  subtitle.textContent = "המסך הזה מציג את הפידבק מהמטופל. אין אפשרות לשלוח הודעות.";
+  subtitle.textContent = "המסך הזה מציג את הפידבק אודות השיחה. אין אפשרות לשלוח הודעות.";
   card.appendChild(subtitle);
 
   const feedbackBody = document.createElement("div");
@@ -489,7 +500,11 @@ async function renderFeedback(step) {
       throw new Error(err?.error || "Feedback request failed");
     }
     const data = await response.json();
-    feedbackBody.innerHTML = window.marked.parse(data.response || "");
+    if (data.eligible === false) {
+      feedbackBody.textContent = data.response || "לא ניתן לספק פידבק כי הדרישות לא מולאו.";
+    } else {
+      feedbackBody.innerHTML = window.marked.parse(data.response || "");
+    }
   } catch (error) {
     feedbackBody.textContent = `שגיאה בטעינת הפידבק: ${error.message}`;
   }
@@ -508,18 +523,11 @@ async function renderCurrentStep() {
   const step = state.steps[state.currentStepIndex];
 
   if (!step) {
-    renderPlaceholder("כל השלבים הושלמו. לחצו על \"סיום המפגש\" כדי לסגור את הסשן.");
-    if (completeButton) completeButton.hidden = false;
+    renderPlaceholder("כל השלבים הושלמו. ניתן לסגור את העמוד.");
     return;
   }
 
-  if (completeButton) completeButton.hidden = true;
-
-  // Arrow navigation visibility
-  stepBackBtn.style.display = state.currentStepIndex > 0 ? "" : "none";
-  stepForwardBtn.style.display = (state.steps && state.currentStepIndex < state.steps.length - 1) ? "" : "none";
-  stepBackBtn.disabled = state.currentStepIndex === 0;
-  stepForwardBtn.disabled = state.currentStepIndex >= state.steps.length - 1;
+  updateStepNavigationVisibility(step);
 
   if (step.type === "form") {
     const response = await fetch(`/api/forms/${step.key}`);
@@ -534,7 +542,6 @@ async function renderCurrentStep() {
 
   if (step.type === "chat") {
     await renderChat(step);
-    if (completeButton) completeButton.hidden = false;
     return;
   }
 
@@ -811,9 +818,11 @@ async function sendChatMessage(userMessage, step) {
     state.conversationId = data.conversationId;
 
     if (data.firstMessageAt) {
+      step.firstMessageAt = data.firstMessageAt;
       startChatTimer(data.firstMessageAt);
       scheduleMidPrime(data.firstMessageAt, step.sessionPersonaId);
     }
+    updateStepNavigationVisibility(step);
     if (data.midPromptSent && timerBadge) {
       timerBadge.classList.add("timer-mid");
     }
@@ -823,7 +832,7 @@ async function sendChatMessage(userMessage, step) {
   } catch (error) {
     typingIndicator.remove();
     appendMessage("assistant", `**שגיאה בשליחה.**\n\n_${error.message}_`);
-    if (error.message && error.message.includes("7 דקות")) {
+    if (error.message && error.message.includes(`${CHAT_DURATION_MINUTES} דקות`)) {
       setChatLockState(true, error.message);
       stopChatTimer();
     }
@@ -833,7 +842,7 @@ async function sendChatMessage(userMessage, step) {
   }
 }
 
-// Removed top-level event listeners for chatForm, messageInput, and completeButton. Now attached dynamically in renderChat.
+// Removed top-level event listeners for chatForm and messageInput. Now attached dynamically in renderChat.
  
 function initialize() {
   participantPanel.hidden = false;
