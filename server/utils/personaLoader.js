@@ -76,12 +76,30 @@ function loadPersonasFromCsv() {
 
   const raw = fs.readFileSync(personasCsvPath, "utf-8");
   const rows = parseCSV(raw).filter((r) => r.length && r.some((v) => v && v.trim().length));
+  if (!rows || !rows.length) {
+    cachedPersonas = [];
+    cachedMtime = stats.mtimeMs;
+    return cachedPersonas;
+  }
+
   const [headerRow, ...dataRows] = rows;
-  const headers = headerRow.map((h) => h.trim());
+  const headers = headerRow.map((h) => String(h || "").trim()).filter(Boolean);
+
+  function parseValue(key, rawValue) {
+    const v = rawValue == null ? "" : String(rawValue).trim();
+    // numeric-ish fields convert to numbers when possible
+    if (v === "") return "";
+    if (/^(patient_id|age|introspection|resolution_ease)$/i.test(key)) {
+      const n = Number(v);
+      return Number.isNaN(n) ? v : n;
+    }
+    return v;
+  }
+
   const personas = dataRows.map((row) => {
     const obj = {};
     headers.forEach((key, idx) => {
-      obj[key] = row[idx];
+      obj[key] = parseValue(key, row[idx]);
     });
     return obj;
   });
@@ -111,6 +129,27 @@ export function getPersonasForSession(sessionKey) {
   const all = loadPersonasFromCsv();
   const key = String(sessionKey ?? "").trim();
   return all.filter((p) => String(p.session ?? "").trim() === key);
+}
+
+// Return a persona object safe for rendering in the UI (hides sensitive/internal fields)
+export function maskPersonaForUI(persona) {
+  if (!persona) return persona;
+  const copy = { ...persona };
+  // `style_of_expression` should not appear in the UI
+  if (Object.prototype.hasOwnProperty.call(copy, "style_of_expression")) {
+    delete copy.style_of_expression;
+  }
+  return copy;
+}
+
+// Convenience getters that return UI-safe persona lists
+export function getAllPersonasForUI() {
+  return loadPersonasFromCsv().map(maskPersonaForUI);
+}
+
+export function getPersonaByPatientIdForUI(patientId) {
+  const p = getPersonaByPatientId(patientId);
+  return maskPersonaForUI(p);
 }
 
 export async function ensureSessionPersonas({ sessionId, participantId, sessionNumber, participantCode }) {
@@ -143,6 +182,9 @@ export function buildPersonaPrompt(personaObj) {
   if (!personaObj) return "";
   const fields = [];
   fields.push(`שם: ${personaObj.name}`);
+  // include style_of_expression in the prompt sent to the API, but this field
+  // is intentionally not shown in the UI (use maskPersonaForUI when rendering)
+  if (personaObj.style_of_expression) fields.push(`סגנון הבעה: ${personaObj.style_of_expression}`);
   if (personaObj.age) fields.push(`גיל: ${personaObj.age}`);
   if (personaObj.gender) fields.push(`מגדר: ${personaObj.gender}`);
   if (personaObj.diagnosis) fields.push(`אבחנה: ${personaObj.diagnosis}`);
