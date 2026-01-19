@@ -1,0 +1,29 @@
+{
+  "key": "post_chat",
+  "title": "הערכת המטופל/ת",
+  "intro": "נא לדרג את החוויה לאחר השיחה.",
+  "items": [
+    {
+      "id": "believability",
+      "type": "likert",
+      "prompt": "באיזו מידה הדמות נראתה אמינה/מציאותית?",
+      "scale": [1, 5],
+      "labels": { "1": "בכלל לא", "5": "במידה רבה" },
+      "required": false
+    },
+    {
+      "id": "difficulty",
+      "type": "likert",
+      "prompt": "באיזו מידה השיחה עם המטופל/ת הייתה מאתגרת?",
+      "scale": [1, 5],
+      "labels": { "1": "בכלל לא", "5": "במידה רבה" },
+      "required": false
+    },
+    {
+      "id": "open_notes",
+      "type": "text",
+      "prompt": "כמה מילים על החוויה שלך עם הדמות",
+      "required": false
+    }
+  ]
+}

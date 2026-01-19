@@ -82,6 +82,7 @@ function createDatabase() {
         session_number INTEGER NOT NULL,
         form_key TEXT NOT NULL,
         responses_json TEXT NOT NULL,
+        session_persona_id INTEGER,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(participant_id) REFERENCES participants(id)
       )
@@ -116,6 +117,9 @@ function createDatabase() {
     ensureColumnExists(db, "messages", "conversation_id", "TEXT").catch((err) =>
       console.error("Failed to add conversation_id column", err)
     );
+    ensureColumnExists(db, "form_responses", "session_persona_id", "INTEGER").catch((err) =>
+      console.error("Failed to add session_persona_id column to form_responses", err)
+    );
   });
   return db;
 }
@@ -127,9 +131,11 @@ function getDb() {
   return dbInstance;
 }
 
-export function createInvite({ totalSessions = 2 } = {}) {
+export function createInvite({ sessionNumber = 1 } = {}) {
   const db = getDb();
   const participantCode = randomUUID();
+  const totalSessions = 1;
+  const targetSessionNumber = Number(sessionNumber) || 1;
 
   return new Promise((resolve, reject) => {
     db.run(
@@ -144,11 +150,9 @@ export function createInvite({ totalSessions = 2 } = {}) {
           "INSERT INTO sessions (participant_id, session_number, session_token) VALUES (?, ?, ?)"
         );
 
-        for (let sessionNumber = 1; sessionNumber <= totalSessions; sessionNumber += 1) {
-          const token = randomUUID();
-          insertSession.run(participantId, sessionNumber, token);
-          sessionTokens.push({ sessionNumber, token });
-        }
+        const token = randomUUID();
+        insertSession.run(participantId, targetSessionNumber, token);
+        sessionTokens.push({ sessionNumber: targetSessionNumber, token });
 
         insertSession.finalize((finalizeErr) => {
           if (finalizeErr) return reject(finalizeErr);
@@ -356,13 +360,13 @@ export function savePersonaMessage({ participantId, sessionNumber, role, content
   });
 }
 
-export function saveFormResponse({ participantId, sessionNumber, formKey, responses }) {
+export function saveFormResponse({ participantId, sessionNumber, formKey, responses, sessionPersonaId = null }) {
   const db = getDb();
   const payload = JSON.stringify(responses ?? {});
   return new Promise((resolve, reject) => {
     db.run(
-      "INSERT INTO form_responses (participant_id, session_number, form_key, responses_json) VALUES (?, ?, ?, ?)",
-      [participantId, sessionNumber, formKey, payload],
+      "INSERT INTO form_responses (participant_id, session_number, form_key, responses_json, session_persona_id) VALUES (?, ?, ?, ?, ?)",
+      [participantId, sessionNumber, formKey, payload, sessionPersonaId],
       function onInsert(err) {
         if (err) return reject(err);
         resolve(this.lastID);
@@ -551,7 +555,7 @@ export function listMessagesByParticipant(participantId) {
 export function listFormResponses({ participantId, sessionNumber }) {
   const db = getDb();
   const query = `
-    SELECT form_key, responses_json, created_at
+    SELECT form_key, responses_json, session_persona_id, created_at
     FROM form_responses
     WHERE participant_id = ? AND session_number = ?
     ORDER BY id ASC
@@ -564,6 +568,7 @@ export function listFormResponses({ participantId, sessionNumber }) {
         (rows || []).map((row) => ({
           formKey: row.form_key,
           responses: JSON.parse(row.responses_json || "{}"),
+          sessionPersonaId: row.session_persona_id,
           createdAt: row.created_at
         }))
       );

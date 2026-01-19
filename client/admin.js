@@ -1,5 +1,6 @@
 const inviteForm = document.getElementById("invite-form");
 const inviteResult = document.getElementById("invite-result");
+const sessionSelect = document.getElementById("session-select");
 const participantsTable = document.getElementById("participants-table");
 const participantsColumnToggles = document.getElementById("participants-column-toggles");
 const messagesModal = document.getElementById("messages-modal");
@@ -22,6 +23,8 @@ const participantColumnDefs = [
   { key: "sessionStatus", label: "סטטוס מפגש", defaultVisible: true },
   { key: "sessionStartAt", label: "תחילת מפגש", defaultVisible: true },
   { key: "sessionLink", label: "קישור למפגש", defaultVisible: true },
+  { key: "sessionPath", label: "סיומת קישור", defaultVisible: true },
+  { key: "sessionToken", label: "token מלא", defaultVisible: false },
   { key: "overallStatus", label: "סטטוס כללי", defaultVisible: false }
 ];
 
@@ -140,7 +143,9 @@ function renderParticipantsTable(data) {
             sessionStartAt: formatDateTime(session.startedAt),
             sessionLink: session.token
               ? `<a href="${origin}/?token=${session.token}" target="_blank" rel="noopener">פתח</a>`
-              : ""
+              : "",
+            sessionPath: session.token ? `/?token=${session.token}` : "",
+            sessionToken: session.token || ""
           };
 
           const cells = visibleSessionColumns
@@ -279,10 +284,11 @@ inviteForm?.addEventListener("submit", async (event) => {
   inviteResult.textContent = "יוצר הזמנה...";
 
   try {
+    const sessionNumber = sessionSelect?.value ? Number(sessionSelect.value) : null;
     const response = await fetch("/api/admin/invite", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({})
+      body: JSON.stringify({ sessionNumber })
     });
 
     if (!response.ok) {
@@ -292,7 +298,10 @@ inviteForm?.addEventListener("submit", async (event) => {
 
     const data = await response.json();
     const links = (data.sessions || [])
-      .map((session) => `<div>מפגש ${session.sessionNumber}: <a href="${session.url}" target="_blank" rel="noopener">${session.url}</a></div>`)
+      .map((session) => (
+        `<div>מפגש ${session.sessionNumber}: <a href="${session.url}" target="_blank" rel="noopener">${session.url}</a>` +
+        ` <div class="muted">סיומת קישור לשיתוף: ${session.path}</div></div>`
+      ))
       .join("");
     inviteResult.innerHTML = `<strong>קוד משתתף:</strong> ${data.participantCode}<br />${links}`;
     loadParticipants();
@@ -301,8 +310,24 @@ inviteForm?.addEventListener("submit", async (event) => {
   }
 });
 
+async function loadSessionOptions() {
+  if (!sessionSelect) return;
+  try {
+    const response = await fetch("/api/admin/session-options");
+    if (!response.ok) return;
+    const data = await response.json();
+    const options = (data.sessions || []).map((s) =>
+      `<option value="${s.sessionNumber}">${s.label || `מפגש ${s.sessionNumber}`}</option>`
+    );
+    sessionSelect.innerHTML = options.join("");
+  } catch (error) {
+    console.warn("Failed to load session options", error);
+  }
+}
+
 function initialize() {
   renderParticipantsColumnToggles();
+  loadSessionOptions();
   loadParticipants();
 }
 

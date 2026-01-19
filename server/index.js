@@ -178,20 +178,39 @@ app.use("/api/admin", adminAuth);
 app.post("/api/admin/invite", async (req, res) => {
   try {
     const flow = loadSessionFlow();
-    const totalSessions = flow.defaultTotalSessions || 2;
-    const invite = await createInvite({ totalSessions });
+    const requestedSession = Number(req.body?.sessionNumber) || 1;
+    const availableSessions = (flow.sessions || []).map((s) => Number(s.session)).filter((n) => Number.isFinite(n));
+    const sessionNumber = availableSessions.includes(requestedSession)
+      ? requestedSession
+      : (availableSessions[0] || 1);
+    const invite = await createInvite({ sessionNumber });
 
     const origin = req.get("origin") || `${req.protocol}://${req.get("host")}`;
     const sessions = invite.sessionTokens.map(({ sessionNumber, token }) => ({
       sessionNumber,
       token,
-      url: `${origin}/?token=${token}`
+      url: `${origin}/?token=${token}`,
+      path: `/?token=${token}`
     }));
 
     res.json({ participantCode: invite.participantCode, sessions });
   } catch (error) {
     console.error("Failed to create invite", error);
     res.status(500).json({ error: error?.message || "Could not create invite." });
+  }
+});
+
+app.get("/api/admin/session-options", (_req, res) => {
+  try {
+    const flow = loadSessionFlow();
+    const options = (flow.sessions || []).map((session) => ({
+      sessionNumber: Number(session.session),
+      label: session.label || `מפגש ${session.session}`
+    }));
+    res.json({ sessions: options });
+  } catch (error) {
+    console.error("Failed to load session options", error);
+    res.status(500).json({ error: error?.message || "Could not load session options." });
   }
 });
 
@@ -281,13 +300,20 @@ app.get("/api/session/:token", async (req, res) => {
       };
       return [
         { type: "chat", kind: "persona", order: personaRow.personaOrder, ...personaMeta },
-        { type: "feedback", kind: "persona_feedback", order: personaRow.personaOrder + 0.5, ...personaMeta }
+        { type: "form", key: "post_chat", kind: "post_chat", order: personaRow.personaOrder + 0.25, ...personaMeta },
+        { type: "feedback", kind: "persona_feedback", order: personaRow.personaOrder + 0.5, ...personaMeta },
+        { type: "form", key: "post_feedback", kind: "post_feedback", order: personaRow.personaOrder + 0.75, ...personaMeta }
       ];
     });
 
-    const nonChatSteps = configuredSteps.filter((step) => step.type !== "chat").map((step) => ({ ...step }));
+    const nonChatSteps = configuredSteps
+      .filter((step) => step.type !== "chat" && step.position !== "after_personas")
+      .map((step) => ({ ...step }));
+    const afterPersonaSteps = configuredSteps
+      .filter((step) => step.type !== "chat" && step.position === "after_personas")
+      .map((step) => ({ ...step }));
     const orderedPersonaSteps = personaSteps.sort((a, b) => (a.order || 0) - (b.order || 0));
-    const steps = [...nonChatSteps, ...orderedPersonaSteps];
+    const steps = [...nonChatSteps, ...orderedPersonaSteps, ...afterPersonaSteps];
 
     res.json({
       participantCode: session.participantCode,
@@ -313,9 +339,22 @@ app.post("/api/session/:token/forms/:formKey", async (req, res) => {
     }
 
     const steps = getSessionSteps(session.sessionNumber);
-    const allowed = steps.some((step) => step.type === "form" && step.key === formKey);
+    const requestedSessionPersonaId = req.body?.sessionPersonaId ? Number(req.body.sessionPersonaId) : null;
+    const personaFormKeys = new Set(["post_chat", "post_feedback"]);
+
+    let allowed = steps.some((step) => step.type === "form" && step.key === formKey);
+    if (!allowed && personaFormKeys.has(formKey)) {
+      allowed = Boolean(requestedSessionPersonaId);
+    }
     if (!allowed) {
       return res.status(400).json({ error: "Form not part of this session." });
+    }
+
+    if (requestedSessionPersonaId) {
+      const personaRecord = await getSessionPersona(requestedSessionPersonaId);
+      if (!personaRecord || personaRecord.sessionId !== session.sessionId) {
+        return res.status(400).json({ error: "Persona not linked to this session." });
+      }
     }
 
     const responses = req.body?.responses || {};
@@ -324,7 +363,8 @@ app.post("/api/session/:token/forms/:formKey", async (req, res) => {
       participantId: session.participantId,
       sessionNumber: session.sessionNumber,
       formKey,
-      responses
+      responses,
+      sessionPersonaId: requestedSessionPersonaId
     });
 
     res.json({ ok: true });

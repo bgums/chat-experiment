@@ -1,0 +1,29 @@
+{
+  "key": "post_feedback",
+  "title": "הערכת הפידבק",
+  "intro": "נא לדרג את הפידבק שקיבלת.",
+  "items": [
+    {
+      "id": "helpfulness",
+      "type": "likert",
+      "prompt": "עד כמה הפידבק היה מועיל עבורך?",
+      "scale": [1, 5],
+      "labels": { "1": "בכלל לא", "5": "במידה רבה" },
+      "required": false
+    },
+    {
+      "id": "consistency_3rs",
+      "type": "likert",
+      "prompt": "באיזו מידה הפידבק היה עקבי עם פרוטוקול 3RS?",
+      "scale": [1, 5],
+      "labels": { "1": "בכלל לא", "5": "במידה רבה" },
+      "required": false
+    },
+    {
+      "id": "open_notes",
+      "type": "text",
+      "prompt": "שתפו מחשבות נוספות על הפידבק",
+      "required": false
+    }
+  ]
+}

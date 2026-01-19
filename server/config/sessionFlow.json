@@ -1,5 +1,5 @@
 {
-  "defaultTotalSessions": 4,
+  "defaultTotalSessions": 1,
   "sessions": [
     {
       "session": 1,
@@ -8,28 +8,41 @@
         { "type": "form", "key": "consent" },
         { "type": "form", "key": "demographics" },
         { "type": "module", "key": "rupture_repair_3rs" },
-        { "type": "chat" }
+        { "type": "chat" },
+        { "type": "form", "key": "end_session", "position": "after_personas" }
       ]
     },
     {
       "session": 2,
       "label": "מפגש שני",
       "steps": [
-        { "type": "chat" }
+        { "type": "form", "key": "consent" },
+        { "type": "form", "key": "demographics" },
+        { "type": "module", "key": "rupture_repair_3rs" },
+        { "type": "chat" },
+        { "type": "form", "key": "end_session", "position": "after_personas" }
       ]
     },
     {
       "session": 3,
       "label": "מפגש שלישי",
       "steps": [
-        { "type": "chat" }
+        { "type": "form", "key": "consent" },
+        { "type": "form", "key": "demographics" },
+        { "type": "module", "key": "rupture_repair_3rs" },
+        { "type": "chat" },
+        { "type": "form", "key": "end_session", "position": "after_personas" }
       ]
     },
     {
       "session": 4,
       "label": "מפגש רביעי",
       "steps": [
-        { "type": "chat" }
+        { "type": "form", "key": "consent" },
+        { "type": "form", "key": "demographics" },
+        { "type": "module", "key": "rupture_repair_3rs" },
+        { "type": "chat" },
+        { "type": "form", "key": "end_session", "position": "after_personas" }
       ]
     }
   ]

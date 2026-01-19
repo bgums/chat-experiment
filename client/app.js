@@ -174,13 +174,20 @@ function renderPlaceholder(text) {
   stepContainer.innerHTML = `<div class="placeholder">${text}</div>`;
 }
 
-function renderForm(formDef) {
+function renderForm(formDef, step = {}) {
   const wrapper = document.createElement("div");
   wrapper.classList.add("step-card");
 
   const title = document.createElement("h3");
   title.textContent = formDef.title || formDef.key;
   wrapper.appendChild(title);
+
+  if (step?.persona?.name) {
+    const personaLine = document.createElement("p");
+    personaLine.classList.add("muted");
+    personaLine.textContent = `עבור המטופל/ת: ${step.persona.name}`;
+    wrapper.appendChild(personaLine);
+  }
 
   if (formDef.intro) {
   // Attach event listeners
@@ -327,7 +334,10 @@ function renderForm(formDef) {
       await fetch(`/api/session/${state.token}/forms/${formDef.key}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ responses })
+        body: JSON.stringify({
+          responses,
+          sessionPersonaId: step.sessionPersonaId || null
+        })
       });
       state.currentStepIndex += 1;
       renderCurrentStep();
@@ -536,7 +546,7 @@ async function renderCurrentStep() {
       return;
     }
     const formDef = await response.json();
-    renderForm(formDef);
+    renderForm(formDef, step);
     return;
   }
 
@@ -770,7 +780,11 @@ async function loadSession() {
     state.steps = data.steps || [];
     state.conversationId = data.conversationId || null;
     if (statusText) {
-      statusText.textContent = `מפגש ${data.sessionNumber} מתוך ${data.totalSessions || "?"}`;
+      if (Number(data.totalSessions) === 1) {
+        statusText.textContent = `מפגש ${data.sessionNumber}`;
+      } else {
+        statusText.textContent = `מפגש ${data.sessionNumber} מתוך ${data.totalSessions || "?"}`;
+      }
     }
     if (sessionLabel) {
       sessionLabel.textContent = data.sessionLabel || `Session ${data.sessionNumber}`;
