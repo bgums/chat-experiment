@@ -33,9 +33,9 @@ const state = {
   personas: {}
 };
 
-const CHAT_DURATION_MINUTES = 10;
+const CHAT_DURATION_MINUTES = 5;
 const CHAT_DURATION_MS = CHAT_DURATION_MINUTES * 60 * 1000;
-const MID_PROMPT_MINUTES = 4.5;
+const MID_PROMPT_MINUTES = 2.5;
 const MID_PROMPT_MS = MID_PROMPT_MINUTES * 60 * 1000;
 
 const createMessageElement = (role, markdown) => {
@@ -780,7 +780,10 @@ async function loadSession() {
     state.steps = data.steps || [];
     state.conversationId = data.conversationId || null;
     if (statusText) {
-      if (Number(data.totalSessions) === 1) {
+      const label = data.sessionLabel || "";
+      if (label) {
+        statusText.textContent = label;
+      } else if (Number(data.totalSessions) === 1) {
         statusText.textContent = `מפגש ${data.sessionNumber}`;
       } else {
         statusText.textContent = `מפגש ${data.sessionNumber} מתוך ${data.totalSessions || "?"}`;

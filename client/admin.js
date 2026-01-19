@@ -13,13 +13,13 @@ const messageColumnDefs = [
   { key: "createdAt", label: "תאריך/שעה", defaultVisible: true },
   { key: "roleLabel", label: "שולח", defaultVisible: true },
   { key: "content", label: "תוכן", defaultVisible: true },
-  { key: "sessionNumber", label: "מפגש", defaultVisible: true },
+  { key: "sessionNumber", label: "מפגש", defaultVisible: false },
   { key: "conversationId", label: "conversation_id", defaultVisible: false },
   { key: "conversationCreatedAt", label: "תאריך/שעת יצירת השיחה", defaultVisible: false }
 ];
 
 const participantColumnDefs = [
-  { key: "sessionNumber", label: "מפגש", defaultVisible: true },
+  { key: "patientName", label: "מטופל/ת", defaultVisible: true },
   { key: "sessionStatus", label: "סטטוס מפגש", defaultVisible: true },
   { key: "sessionStartAt", label: "תחילת מפגש", defaultVisible: true },
   { key: "sessionLink", label: "קישור למפגש", defaultVisible: true },
@@ -138,7 +138,7 @@ function renderParticipantsTable(data) {
         .map((session, idx) => {
           const statusObj = computeSessionStatus(session);
           const sessionValues = {
-            sessionNumber: session.sessionNumber ? `מפגש ${session.sessionNumber}` : "",
+            patientName: session.patientName || "",
             sessionStatus: renderStatusPill(statusObj),
             sessionStartAt: formatDateTime(session.startedAt),
             sessionLink: session.token
@@ -284,11 +284,15 @@ inviteForm?.addEventListener("submit", async (event) => {
   inviteResult.textContent = "יוצר הזמנה...";
 
   try {
-    const sessionNumber = sessionSelect?.value ? Number(sessionSelect.value) : null;
+    const patientId = sessionSelect?.value ? String(sessionSelect.value) : "";
+    if (!patientId) {
+      inviteResult.textContent = "יש לבחור מטופל/ת";
+      return;
+    }
     const response = await fetch("/api/admin/invite", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sessionNumber })
+      body: JSON.stringify({ patientId })
     });
 
     if (!response.ok) {
@@ -299,7 +303,7 @@ inviteForm?.addEventListener("submit", async (event) => {
     const data = await response.json();
     const links = (data.sessions || [])
       .map((session) => (
-        `<div>מפגש ${session.sessionNumber}: <a href="${session.url}" target="_blank" rel="noopener">${session.url}</a>` +
+        `<div><strong>${data.patient?.name || ""}</strong>: <a href="${session.url}" target="_blank" rel="noopener">${session.url}</a>` +
         ` <div class="muted">סיומת קישור לשיתוף: ${session.path}</div></div>`
       ))
       .join("");
@@ -310,24 +314,24 @@ inviteForm?.addEventListener("submit", async (event) => {
   }
 });
 
-async function loadSessionOptions() {
+async function loadPatientOptions() {
   if (!sessionSelect) return;
   try {
-    const response = await fetch("/api/admin/session-options");
+    const response = await fetch("/api/admin/patient-options");
     if (!response.ok) return;
     const data = await response.json();
-    const options = (data.sessions || []).map((s) =>
-      `<option value="${s.sessionNumber}">${s.label || `מפגש ${s.sessionNumber}`}</option>`
+    const options = (data.patients || []).map((p) =>
+      `<option value="${p.patientId}">${p.name}</option>`
     );
     sessionSelect.innerHTML = options.join("");
   } catch (error) {
-    console.warn("Failed to load session options", error);
+    console.warn("Failed to load patient options", error);
   }
 }
 
 function initialize() {
   renderParticipantsColumnToggles();
-  loadSessionOptions();
+  loadPatientOptions();
   loadParticipants();
 }
 

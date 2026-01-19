@@ -14,6 +14,20 @@ const personasCsvPath = path.join(__dirname, "..", "instructions", "experiment_p
 let cachedPersonas = null;
 let cachedMtime = null;
 
+export function getAllPersonas() {
+  return loadPersonasFromCsv();
+}
+
+export function getPersonaByPatientId(patientId) {
+  const all = loadPersonasFromCsv();
+  const needle = String(patientId ?? "").trim();
+  if (!needle) return null;
+  return (
+    all.find((p) => String(p.patient_id ?? "").trim() === needle)
+    || null
+  );
+}
+
 function parseCSV(text) {
   const rows = [];
   let current = [];
@@ -93,11 +107,10 @@ function shuffle(array, seed) {
   return result;
 }
 
-export function getPersonasForSession(sessionNumber) {
+export function getPersonasForSession(sessionKey) {
   const all = loadPersonasFromCsv();
-  return all
-    .map((p) => ({ ...p, session: Number(p.session || 0) }))
-    .filter((p) => Number(p.session) === Number(sessionNumber));
+  const key = String(sessionKey ?? "").trim();
+  return all.filter((p) => String(p.session ?? "").trim() === key);
 }
 
 export async function ensureSessionPersonas({ sessionId, participantId, sessionNumber, participantCode }) {
@@ -105,15 +118,16 @@ export async function ensureSessionPersonas({ sessionId, participantId, sessionN
   if (existing && existing.length) return existing;
 
   const candidates = getPersonasForSession(sessionNumber);
-  if (!candidates.length) {
-    throw new Error(`No personas found in CSV for session ${sessionNumber}`);
+  const fallbackCandidates = candidates.length ? candidates : loadPersonasFromCsv();
+  if (!fallbackCandidates.length) {
+    throw new Error("No personas found in CSV.");
   }
 
   const seed = participantCode || `${sessionId}-${sessionNumber}`;
-  const randomized = shuffle(candidates, seed).slice(0, 2);
+  const randomized = shuffle(fallbackCandidates, seed).slice(0, 1);
   const personas = randomized.map((p, idx) => ({
     personaCsvId: Number(p.patient_id || idx + 1),
-    order: idx + 1,
+    order: 1,
     name: p.name,
     data: p
   }));

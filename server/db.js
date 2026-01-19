@@ -146,23 +146,21 @@ export function createInvite({ sessionNumber = 1 } = {}) {
 
         const participantId = this.lastID;
         const sessionTokens = [];
-        const insertSession = db.prepare(
-          "INSERT INTO sessions (participant_id, session_number, session_token) VALUES (?, ?, ?)"
-        );
-
         const token = randomUUID();
-        insertSession.run(participantId, targetSessionNumber, token);
-        sessionTokens.push({ sessionNumber: targetSessionNumber, token });
-
-        insertSession.finalize((finalizeErr) => {
-          if (finalizeErr) return reject(finalizeErr);
-
-          resolve({
-            participantId,
-            participantCode,
-            sessionTokens
-          });
-        });
+        db.run(
+          "INSERT INTO sessions (participant_id, session_number, session_token) VALUES (?, ?, ?)",
+          [participantId, targetSessionNumber, token],
+          function insertSession(err2) {
+            if (err2) return reject(err2);
+            const sessionId = this.lastID;
+            sessionTokens.push({ sessionNumber: targetSessionNumber, token, sessionId });
+            resolve({
+              participantId,
+              participantCode,
+              sessionTokens
+            });
+          }
+        );
       }
     );
   });
@@ -181,9 +179,11 @@ export function listParticipants() {
       s.session_token,
       s.status AS session_status,
       s.started_at,
-      s.completed_at
+      s.completed_at,
+      sp.persona_name AS persona_name
     FROM participants p
     LEFT JOIN sessions s ON s.participant_id = p.id
+    LEFT JOIN session_personas sp ON sp.session_id = s.id AND sp.persona_order = 1
     ORDER BY p.created_at DESC, s.session_number ASC
   `;
 
@@ -215,6 +215,7 @@ export function listParticipants() {
             sessionId: row.session_id,
             sessionNumber: row.session_number,
             token: row.session_token,
+            patientName: row.persona_name || null,
             status: sessionStatus,
             startedAt: row.started_at,
             completedAt: row.completed_at

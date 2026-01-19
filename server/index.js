@@ -26,9 +26,15 @@ import {
   getSessionPersona,
   listMessagesBySessionPersona,
   saveConversationId,
-  listSessionsByParticipant
+  listSessionsByParticipant,
+  createSessionPersonas
 } from "./db.js";
-import { ensureSessionPersonas, buildPersonaPrompt } from "./utils/personaLoader.js";
+import {
+  ensureSessionPersonas,
+  buildPersonaPrompt,
+  getAllPersonas,
+  getPersonaByPatientId
+} from "./utils/personaLoader.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -54,9 +60,9 @@ const chatInstructions = fs.readFileSync(chatInstructionsPath, "utf-8");
 const midChatInstructions = fs.readFileSync(midChatInstructionsPath, "utf-8");
 const feedbackInstructions = fs.readFileSync(feedbackInstructionsPath, "utf-8");
 
-const CHAT_DURATION_MINUTES = 10;
+const CHAT_DURATION_MINUTES = 5;
 const CHAT_DURATION_MS = CHAT_DURATION_MINUTES * 60 * 1000;
-const MID_PROMPT_MINUTES = 4.5;
+const MID_PROMPT_MINUTES = 2.5;
 const MID_PROMPT_MS = MID_PROMPT_MINUTES * 60 * 1000;
 const FEEDBACK_MIN_PARTICIPANT_MESSAGES = 4;
 const FEEDBACK_FALLBACK_TEXT = "feedback could not be provided as the chat did not meet the requirements";
@@ -175,15 +181,56 @@ function loadModuleDefinition(moduleKey) {
 
 app.use("/api/admin", adminAuth);
 
+app.get("/api/admin/patient-options", (_req, res) => {
+  try {
+    const personas = getAllPersonas();
+    const options = (personas || [])
+      .map((p) => ({
+        patientId: String(p.patient_id ?? "").trim(),
+        name: String(p.name ?? "").trim()
+      }))
+      .filter((p) => p.patientId && p.name)
+      .sort((a, b) => a.name.localeCompare(b.name, "he"));
+    res.json({ patients: options });
+  } catch (error) {
+    console.error("Failed to load patient options", error);
+    res.status(500).json({ error: error?.message || "Could not load patients." });
+  }
+});
+
 app.post("/api/admin/invite", async (req, res) => {
   try {
-    const flow = loadSessionFlow();
-    const requestedSession = Number(req.body?.sessionNumber) || 1;
-    const availableSessions = (flow.sessions || []).map((s) => Number(s.session)).filter((n) => Number.isFinite(n));
-    const sessionNumber = availableSessions.includes(requestedSession)
-      ? requestedSession
-      : (availableSessions[0] || 1);
+    const patientId = String(req.body?.patientId ?? "").trim();
+    if (!patientId) {
+      return res.status(400).json({ error: "patientId is required." });
+    }
+
+    const selectedPersona = getPersonaByPatientId(patientId);
+    if (!selectedPersona) {
+      return res.status(400).json({ error: "Selected patient not found in CSV." });
+    }
+
+    const sessionNumber = 1;
     const invite = await createInvite({ sessionNumber });
+
+    const firstSession = invite.sessionTokens?.[0];
+    if (!firstSession?.sessionId) {
+      throw new Error("Invite created without a sessionId.");
+    }
+
+    await createSessionPersonas({
+      sessionId: firstSession.sessionId,
+      participantId: invite.participantId,
+      sessionNumber: firstSession.sessionNumber,
+      personas: [
+        {
+          personaCsvId: Number(selectedPersona.patient_id || patientId),
+          order: 1,
+          name: selectedPersona.name,
+          data: selectedPersona
+        }
+      ]
+    });
 
     const origin = req.get("origin") || `${req.protocol}://${req.get("host")}`;
     const sessions = invite.sessionTokens.map(({ sessionNumber, token }) => ({
@@ -193,7 +240,7 @@ app.post("/api/admin/invite", async (req, res) => {
       path: `/?token=${token}`
     }));
 
-    res.json({ participantCode: invite.participantCode, sessions });
+    res.json({ participantCode: invite.participantCode, patient: { patientId, name: selectedPersona.name }, sessions });
   } catch (error) {
     console.error("Failed to create invite", error);
     res.status(500).json({ error: error?.message || "Could not create invite." });
@@ -202,11 +249,15 @@ app.post("/api/admin/invite", async (req, res) => {
 
 app.get("/api/admin/session-options", (_req, res) => {
   try {
-    const flow = loadSessionFlow();
-    const options = (flow.sessions || []).map((session) => ({
-      sessionNumber: Number(session.session),
-      label: session.label || `מפגש ${session.session}`
-    }));
+    // Backward-compatible alias: return the patient list.
+    const personas = getAllPersonas();
+    const options = (personas || [])
+      .map((p) => ({
+        sessionNumber: String(p.patient_id ?? "").trim(),
+        label: String(p.name ?? "").trim()
+      }))
+      .filter((p) => p.sessionNumber && p.label)
+      .sort((a, b) => a.label.localeCompare(b.label, "he"));
     res.json({ sessions: options });
   } catch (error) {
     console.error("Failed to load session options", error);
@@ -276,6 +327,7 @@ app.get("/api/session/:token", async (req, res) => {
     });
 
     const persistedPersonas = await getSessionPersonas(session.sessionId);
+    const sessionPatientName = persistedPersonas?.[0]?.personaName || null;
 
     await markSessionStarted(session.sessionId);
     await maybeMarkSessionCompleted(session);
@@ -319,7 +371,7 @@ app.get("/api/session/:token", async (req, res) => {
       participantCode: session.participantCode,
       sessionNumber: session.sessionNumber,
       status: session.sessionStatus,
-      sessionLabel: match?.label || null,
+      sessionLabel: sessionPatientName || match?.label || null,
       steps,
       conversationId: null,
       totalSessions: session.totalSessions
