@@ -44,6 +44,28 @@
         <div class="table" id="participants-table"></div>
       </section>
 
+      <section class="panel admin" id="forms-section">
+        <div class="panel-header">
+          <div>
+            <h2>טפסים ונתונים</h2>
+            <p class="muted">צפייה בתשובות וייצוא ל-CSV.</p>
+          </div>
+          <div class="button-row">
+            <button class="ghost-button" id="download-all-forms">הורד הכל (CSV)</button>
+            <button class="ghost-button" id="download-filtered-forms">הורד מסונן</button>
+          </div>
+        </div>
+
+        <div class="form-controls">
+          <label class="muted" for="form-filter">סינון לפי טופס:</label>
+          <select id="form-filter" style="font-family: inherit;"></select>
+          <button class="ghost-button" id="refresh-forms">רענן</button>
+          <span class="muted" id="forms-summary"></span>
+        </div>
+
+        <div class="table" id="forms-table"></div>
+      </section>
+
       <div class="modal" id="messages-modal" hidden>
         <div class="modal-backdrop" id="messages-modal-backdrop"></div>
         <div class="modal-dialog">

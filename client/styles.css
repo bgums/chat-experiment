@@ -217,6 +217,49 @@ body {
   margin: 0;
 }
 
+.button-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.form-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.form-controls select {
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #fff;
+  font-family: inherit;
+}
+
+.response-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.response-chip {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  background: rgba(61, 90, 241, 0.08);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 6px 10px;
+  font-size: 0.95rem;
+}
+
+.response-chip strong {
+  color: var(--primary-dark);
+}
+
 .muted {
   color: var(--muted);
   margin: 4px 0;

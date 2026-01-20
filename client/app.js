@@ -33,9 +33,9 @@ const state = {
   personas: {}
 };
 
-const CHAT_DURATION_MINUTES = 10;
+const CHAT_DURATION_MINUTES = 2.5;
 const CHAT_DURATION_MS = CHAT_DURATION_MINUTES * 60 * 1000;
-const MID_PROMPT_MINUTES = 4.5;
+const MID_PROMPT_MINUTES = 7;
 const MID_PROMPT_MS = MID_PROMPT_MINUTES * 60 * 1000;
 
 const createMessageElement = (role, markdown) => {
@@ -392,7 +392,8 @@ async function renderChat(step) {
   backgroundTitle.textContent = "רקע קצר";
   const backgroundBody = document.createElement("div");
   backgroundBody.className = "persona-background-body";
-  backgroundBody.textContent = persona.background || "";
+  const personaBackground = persona.background_ui || persona.background || "";
+  backgroundBody.textContent = personaBackground;
   backgroundCard.appendChild(backgroundTitle);
   backgroundCard.appendChild(backgroundBody);
   chatWindow.appendChild(backgroundCard);

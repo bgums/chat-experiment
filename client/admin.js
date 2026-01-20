@@ -8,6 +8,12 @@ const messagesModalBody = document.getElementById("messages-modal-body");
 const messagesModalTitle = document.getElementById("messages-modal-title");
 const messagesModalClose = document.getElementById("messages-modal-close");
 const messagesModalBackdrop = document.getElementById("messages-modal-backdrop");
+const formsTable = document.getElementById("forms-table");
+const formFilterSelect = document.getElementById("form-filter");
+const refreshFormsBtn = document.getElementById("refresh-forms");
+const downloadAllFormsBtn = document.getElementById("download-all-forms");
+const downloadFilteredFormsBtn = document.getElementById("download-filtered-forms");
+const formsSummary = document.getElementById("forms-summary");
 
 const messageColumnDefs = [
   { key: "createdAt", label: "תאריך/שעה", defaultVisible: true },
@@ -28,12 +34,24 @@ const participantColumnDefs = [
   { key: "overallStatus", label: "סטטוס כללי", defaultVisible: false }
 ];
 
+function escapeHtml(text) {
+  if (text == null) return "";
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 let visibleColumns = new Set(messageColumnDefs.filter((c) => c.defaultVisible).map((c) => c.key));
 let visibleParticipantColumns = new Set(
   participantColumnDefs.filter((c) => c.defaultVisible).map((c) => c.key)
 );
 let currentMessages = [];
 let currentParticipantCode = "";
+let formResponses = [];
+let currentFormKey = "all";
 
 function formatDateTime(value) {
   if (!value) return "";
@@ -178,6 +196,94 @@ async function loadParticipants() {
   renderParticipantsTable(data.participants || []);
 }
 
+function renderFormFilterOptions(formKeys) {
+  if (!formFilterSelect) return;
+  const uniqueKeys = Array.from(new Set(formKeys || [])).filter(Boolean).sort();
+  const previous = formFilterSelect.value || "all";
+  const options = ["<option value='all'>כל הטפסים</option>", ...uniqueKeys.map((key) => `<option value="${escapeHtml(key)}">${escapeHtml(key)}</option>`)];
+  formFilterSelect.innerHTML = options.join("");
+  if (uniqueKeys.includes(previous)) {
+    formFilterSelect.value = previous;
+  }
+}
+
+function formatResponseValue(value) {
+  if (Array.isArray(value)) return value.join(" | ");
+  if (value && typeof value === "object") return JSON.stringify(value);
+  return value ?? "";
+}
+
+function renderResponseBadges(responses) {
+  const entries = Object.entries(responses || {});
+  if (!entries.length) return "<span class='muted'>ללא תשובות</span>";
+  return `<div class="response-chips">${entries
+    .map(([key, value]) => {
+      const formatted = escapeHtml(formatResponseValue(value));
+      return `<span class="response-chip"><strong>${escapeHtml(key)}:</strong> ${formatted}</span>`;
+    })
+    .join("")}</div>`;
+}
+
+function renderFormsTable(data) {
+  if (!formsTable) return;
+  if (!data?.length) {
+    formsTable.innerHTML = "<div class='placeholder'>אין תשובות לשמירה עדיין.</div>";
+    return;
+  }
+
+  const headerRow = ["טופס", "משתתף", "מפגש", "מטופל/ת", "נוצר ב", "תשובות"]
+    .map((h) => `<th>${h}</th>`)
+    .join("");
+
+  const rows = data
+    .map((row) => {
+      const personaLabel = row.sessionPersonaId
+        ? `${escapeHtml(row.personaName || "מטופל")}${row.personaCsvId ? ` (#${row.personaCsvId})` : ""}`
+        : "—";
+      const participantLink = row.participantCode
+        ? `<a href="#" class="participant-link" data-code="${escapeHtml(row.participantCode)}">${escapeHtml(row.participantCode)}</a>`
+        : "";
+      return `<tr>
+        <td>${escapeHtml(row.formKey)}</td>
+        <td>${participantLink}</td>
+        <td>${escapeHtml(row.sessionNumber)}</td>
+        <td>${personaLabel}</td>
+        <td>${escapeHtml(formatDateTime(row.createdAt))}</td>
+        <td>${renderResponseBadges(row.responses)}</td>
+      </tr>`;
+    })
+    .join("");
+
+  formsTable.innerHTML = `<div class="messages-table"><table><thead><tr>${headerRow}</tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+async function loadFormResponses() {
+  if (!formsTable) return;
+  const formKey = formFilterSelect?.value && formFilterSelect.value !== "all" ? formFilterSelect.value : null;
+  const qs = formKey ? `?formKey=${encodeURIComponent(formKey)}` : "";
+  formsTable.innerHTML = "<div class='placeholder'>טוען תשובות...</div>";
+  try {
+    const resp = await fetch(`/api/admin/forms/responses${qs}`);
+    if (!resp.ok) throw new Error("request failed");
+    const data = await resp.json();
+    renderFormFilterOptions(data.formKeys || []);
+    formResponses = data.responses || [];
+    currentFormKey = formKey || "all";
+    renderFormsTable(formResponses);
+    if (formsSummary) {
+      const label = formKey ? `טופס ${formKey}` : "כל הטפסים";
+      formsSummary.textContent = `${label}: ${formResponses.length} רשומות`;
+    }
+  } catch (error) {
+    formsTable.innerHTML = "<div class='placeholder'>שגיאה בטעינת תשובות הטפסים.</div>";
+  }
+}
+
+function downloadForms(formKey) {
+  const qs = formKey ? `?formKey=${encodeURIComponent(formKey)}` : "";
+  window.location.href = `/api/admin/forms/export${qs}`;
+}
+
 function hideMessagesModal() {
   if (messagesModal) messagesModal.hidden = true;
 }
@@ -253,31 +359,60 @@ function renderMessagesTable() {
   `;
 }
 
+async function openMessagesModalForParticipant(code) {
+  if (!code) return;
+  messagesModalBody.innerHTML = `<div class="placeholder">טוען הודעות...</div>`;
+  messagesModalTitle.textContent = `הודעות עבור ${code}`;
+  messagesModal.hidden = false;
+
+  try {
+    const resp = await fetch(`/api/admin/participant/${code}/messages`);
+    if (!resp.ok) throw new Error("load failed");
+    const data = await resp.json();
+    renderMessagesModal(code, data.messages || []);
+  } catch (err) {
+    messagesModalBody.innerHTML = `<div class="placeholder">שגיאה בטעינת ההודעות.</div>`;
+  }
+}
+
 participantsTable?.addEventListener("click", async (event) => {
   const target = event.target;
   if (target && target.classList.contains("participant-link")) {
     event.preventDefault();
-    const code = target.dataset.code;
-    messagesModalBody.innerHTML = `<div class="placeholder">טוען הודעות...</div>`;
-    messagesModalTitle.textContent = `הודעות עבור ${code}`;
-    messagesModal.hidden = false;
+    await openMessagesModalForParticipant(target.dataset.code);
+  }
+});
 
-    try {
-      const resp = await fetch(`/api/admin/participant/${code}/messages`);
-      if (!resp.ok) {
-        messagesModalBody.innerHTML = `<div class="placeholder">שגיאה בטעינת ההודעות.</div>`;
-        return;
-      }
-      const data = await resp.json();
-      renderMessagesModal(code, data.messages || []);
-    } catch (err) {
-      messagesModalBody.innerHTML = `<div class="placeholder">שגיאה בטעינת ההודעות.</div>`;
-    }
+formsTable?.addEventListener("click", async (event) => {
+  const target = event.target;
+  if (target && target.classList.contains("participant-link")) {
+    event.preventDefault();
+    await openMessagesModalForParticipant(target.dataset.code);
   }
 });
 
 messagesModalClose?.addEventListener("click", hideMessagesModal);
 messagesModalBackdrop?.addEventListener("click", hideMessagesModal);
+
+formFilterSelect?.addEventListener("change", () => {
+  loadFormResponses();
+});
+
+refreshFormsBtn?.addEventListener("click", (event) => {
+  event.preventDefault();
+  loadFormResponses();
+});
+
+downloadAllFormsBtn?.addEventListener("click", (event) => {
+  event.preventDefault();
+  downloadForms(null);
+});
+
+downloadFilteredFormsBtn?.addEventListener("click", (event) => {
+  event.preventDefault();
+  const selectedKey = formFilterSelect?.value && formFilterSelect.value !== "all" ? formFilterSelect.value : null;
+  downloadForms(selectedKey);
+});
 
 inviteForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -329,6 +464,7 @@ function initialize() {
   renderParticipantsColumnToggles();
   loadSessionOptions();
   loadParticipants();
+  loadFormResponses();
 }
 
 initialize();

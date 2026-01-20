@@ -576,6 +576,58 @@ export function listFormResponses({ participantId, sessionNumber }) {
   });
 }
 
+export function listAllFormResponses({ formKey } = {}) {
+  const db = getDb();
+  const params = [];
+  const where = formKey ? "WHERE fr.form_key = ?" : "";
+  if (formKey) params.push(formKey);
+
+  const query = `
+    SELECT fr.id,
+           fr.participant_id AS participantId,
+           fr.session_number AS sessionNumber,
+           fr.form_key AS formKey,
+           fr.responses_json AS responsesJson,
+           fr.session_persona_id AS sessionPersonaId,
+           fr.created_at AS createdAt,
+           p.participant_code AS participantCode,
+           sp.persona_name AS personaName,
+           sp.persona_csv_id AS personaCsvId
+    FROM form_responses fr
+    JOIN participants p ON p.id = fr.participant_id
+    LEFT JOIN session_personas sp ON sp.id = fr.session_persona_id
+    ${where}
+    ORDER BY fr.created_at DESC, fr.id DESC
+  `;
+
+  return new Promise((resolve, reject) => {
+    db.all(query, params, (err, rows) => {
+      if (err) return reject(err);
+      const safeRows = (rows || []).map((row) => {
+        let parsedResponses = {};
+        try {
+          parsedResponses = JSON.parse(row.responsesJson || "{}");
+        } catch (parseErr) {
+          parsedResponses = { _parse_error: parseErr.message };
+        }
+        return {
+          id: row.id,
+          participantId: row.participantId,
+          participantCode: row.participantCode,
+          sessionNumber: row.sessionNumber,
+          formKey: row.formKey,
+          responses: parsedResponses,
+          sessionPersonaId: row.sessionPersonaId,
+          personaName: row.personaName || null,
+          personaCsvId: row.personaCsvId || null,
+          createdAt: row.createdAt
+        };
+      });
+      resolve(safeRows);
+    });
+  });
+}
+
 export function updateParticipantStatus(participantId, status) {
   const db = getDb();
   return new Promise((resolve, reject) => {

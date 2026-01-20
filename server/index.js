@@ -17,6 +17,7 @@ import {
   saveFormResponse,
   savePersonaMessage,
   listMessagesByParticipant,
+  listAllFormResponses,
   updateParticipantStatus,
   getSessionPersonas,
   saveSessionPersonaConversationId,
@@ -54,11 +55,11 @@ const chatInstructions = fs.readFileSync(chatInstructionsPath, "utf-8");
 const midChatInstructions = fs.readFileSync(midChatInstructionsPath, "utf-8");
 const feedbackInstructions = fs.readFileSync(feedbackInstructionsPath, "utf-8");
 
-const CHAT_DURATION_MINUTES = 10;
+const CHAT_DURATION_MINUTES = 2.5;
 const CHAT_DURATION_MS = CHAT_DURATION_MINUTES * 60 * 1000;
-const MID_PROMPT_MINUTES = 4.5;
+const MID_PROMPT_MINUTES = 7;
 const MID_PROMPT_MS = MID_PROMPT_MINUTES * 60 * 1000;
-const FEEDBACK_MIN_PARTICIPANT_MESSAGES = 4;
+const FEEDBACK_MIN_PARTICIPANT_MESSAGES = 2;
 const FEEDBACK_FALLBACK_TEXT = "feedback could not be provided as the chat did not meet the requirements";
 
 const app = express();
@@ -130,6 +131,53 @@ function withPersonaDisplay(personaJson) {
 function logPromptEvent(label, payload) {
   const safePayload = JSON.stringify(payload, null, 2);
   console.log(`[prompt-log] ${label}: ${safePayload}`);
+}
+
+function escapeCsvValue(value) {
+  const safe = value == null ? "" : String(value);
+  const escaped = safe.replace(/"/g, '""');
+  return `"${escaped}"`;
+}
+
+function buildFormResponsesCsv(rows) {
+  const baseColumns = [
+    "formKey",
+    "participantCode",
+    "sessionNumber",
+    "sessionPersonaId",
+    "personaName",
+    "personaCsvId",
+    "createdAt"
+  ];
+
+  const dynamicKeys = new Set();
+  rows.forEach((row) => {
+    Object.keys(row.responses || {}).forEach((key) => dynamicKeys.add(key));
+  });
+  const dynamicColumns = Array.from(dynamicKeys).sort();
+  const columns = [...baseColumns, ...dynamicColumns];
+
+  const header = columns.map(escapeCsvValue).join(",");
+  const lines = rows.map((row) => {
+    return columns
+      .map((col) => {
+        if (col === "formKey") return escapeCsvValue(row.formKey);
+        if (col === "participantCode") return escapeCsvValue(row.participantCode);
+        if (col === "sessionNumber") return escapeCsvValue(row.sessionNumber);
+        if (col === "sessionPersonaId") return escapeCsvValue(row.sessionPersonaId);
+        if (col === "personaName") return escapeCsvValue(row.personaName);
+        if (col === "personaCsvId") return escapeCsvValue(row.personaCsvId);
+        if (col === "createdAt") return escapeCsvValue(row.createdAt);
+
+        const value = row.responses?.[col];
+        if (Array.isArray(value)) return escapeCsvValue(value.join(" | "));
+        if (value && typeof value === "object") return escapeCsvValue(JSON.stringify(value));
+        return escapeCsvValue(value ?? "");
+      })
+      .join(",");
+  });
+
+  return [header, ...lines].join("\n");
 }
 
 async function maybeMarkSessionCompleted(session) {
@@ -240,6 +288,33 @@ app.get("/api/admin/participant/:participantCode/messages", async (req, res) => 
   }
 });
 
+app.get("/api/admin/forms/responses", async (req, res) => {
+  try {
+    const formKey = req.query?.formKey ? String(req.query.formKey) : null;
+    const responses = await listAllFormResponses({ formKey });
+    const formKeys = Array.from(new Set(responses.map((r) => r.formKey))).sort();
+    res.json({ responses, formKeys });
+  } catch (error) {
+    console.error("Failed to load form responses", error);
+    res.status(500).json({ error: error?.message || "Could not load form responses." });
+  }
+});
+
+app.get("/api/admin/forms/export", async (req, res) => {
+  try {
+    const formKey = req.query?.formKey ? String(req.query.formKey) : null;
+    const responses = await listAllFormResponses({ formKey });
+    const csv = buildFormResponsesCsv(responses);
+    const safeName = formKey ? `form-${formKey}-responses.csv` : "form-responses.csv";
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename=${safeName}`);
+    res.send(csv);
+  } catch (error) {
+    console.error("Failed to export form responses", error);
+    res.status(500).json({ error: error?.message || "Could not export form responses." });
+  }
+});
+
 app.get("/api/forms/:formKey", (req, res) => {
   const form = loadFormDefinition(req.params.formKey);
   if (!form) {
@@ -292,10 +367,11 @@ app.get("/api/session/:token", async (req, res) => {
           csvId: personaRow.personaCsvId,
           name: personaRow.personaName,
           age: personaData.age || null,
-          background: personaData.background || "",
-          difficulty: personaData.difficulty || "",
           gender: personaData.gender || "",
-          diagnosis: personaData.diagnosis || ""
+          background: personaData.background || "",
+          background_ui: personaData.background_ui || personaData.background || "",
+          emotional_intelligence: personaData.emotional_intelligence ?? null,
+          style_of_expression: personaData.style_of_expression || ""
         }
       };
       return [
@@ -416,30 +492,27 @@ app.post("/api/session/:token/message", async (req, res) => {
     }
 
     const elapsedMs = now.getTime() - new Date(firstMessageAt).getTime();
-    const elapsedMinutes = elapsedMs / 60000;
 
     if (elapsedMs >= CHAT_DURATION_MS) {
       await maybeMarkSessionCompleted(session);
       return res.status(400).json({ error: `זמן השיחה הסתיים (${CHAT_DURATION_MINUTES} דקות).` });
     }
 
-    const shouldSendMid = !personaRecord.midPromptSent && elapsedMs >= MID_PROMPT_MS;
-    if (shouldSendMid) {
-      await markSessionPersonaMidPromptSent(sessionPersonaId);
-    }
+    const midPromptEligible = elapsedMs >= MID_PROMPT_MS;
+    const shouldAttachMidInstructions = midPromptEligible && !personaRecord.midPromptSent;
 
-    const instructions = combineChatPrompt(personaData, shouldSendMid || personaRecord.midPromptSent);
+    const instructions = combineChatPrompt(personaData, shouldAttachMidInstructions || personaRecord.midPromptSent);
 
     logPromptEvent("chat", {
       sessionNumber: session.sessionNumber,
       participantCode: session.participantCode,
       sessionPersonaId,
-      includeMid: shouldSendMid || personaRecord.midPromptSent,
+      includeMid: shouldAttachMidInstructions || personaRecord.midPromptSent,
       conversationId,
       instructionsPreview: instructions.slice(0, 1200)
     });
 
-    const response = await createResponse({
+    const responsePayload = {
       model: MODEL_ID,
       conversation: conversationId,
       instructions,
@@ -457,9 +530,15 @@ app.post("/api/session/:token/message", async (req, res) => {
           ]
         }
       ]
-    });
+    };
+
+    const response = await createResponse(responsePayload);
 
     const assistantText = extractTextFromResponse(response);
+
+    if (shouldAttachMidInstructions) {
+      await markSessionPersonaMidPromptSent(sessionPersonaId);
+    }
 
     await savePersonaMessage({
       participantId: session.participantId,
@@ -482,7 +561,7 @@ app.post("/api/session/:token/message", async (req, res) => {
       conversationId,
       response: assistantText,
       firstMessageAt,
-      midPromptSent: shouldSendMid || personaRecord.midPromptSent
+      midPromptSent: shouldAttachMidInstructions || personaRecord.midPromptSent
     });
   } catch (error) {
     console.error("OpenAI request failed", error);
@@ -507,7 +586,7 @@ app.post("/api/message", async (req, res) => {
       conversationId = conversation.id;
     }
 
-    const response = await createResponse({
+    const responsePayload = {
       model: MODEL_ID,
       conversation: conversationId,
       instructions: chatInstructions,
@@ -525,7 +604,9 @@ app.post("/api/message", async (req, res) => {
           ]
         }
       ]
-    });
+    };
+
+    const response = await createResponse(responsePayload);
 
     const assistantText = extractTextFromResponse(response);
 
@@ -607,10 +688,6 @@ app.post("/api/session/:token/persona/:sessionPersonaId/mid-prime", async (req, 
       return res.status(400).json({ error: "Mid-chat instructions not due yet." });
     }
 
-    if (!personaRecord.midPromptSent) {
-      await markSessionPersonaMidPromptSent(sessionPersonaId);
-    }
-
     logPromptEvent("mid-prime", {
       sessionNumber: session.sessionNumber,
       sessionPersonaId,
@@ -618,7 +695,7 @@ app.post("/api/session/:token/persona/:sessionPersonaId/mid-prime", async (req, 
       elapsedMinutes
     });
 
-    return res.json({ ok: true, midPromptSent: true });
+    return res.json({ ok: true, midPromptPending: !personaRecord.midPromptSent });
   } catch (error) {
     console.error("Failed to prime mid instructions", error);
     return res.status(500).json({ error: error?.message || "Could not prime mid instructions." });
