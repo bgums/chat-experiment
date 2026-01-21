@@ -3,6 +3,7 @@
  התייחס במתן הפידבק למונחים מקצועיים מתוך פרוטוקול 3RS. 
 הפידבק ניתן למטפל אשר דיבר עם המטופל בשיחה, במטרה שיהיה מטפל יותר טוב בהמשך.
 אורך מקסימלי : 450 מילים!
+הפידבק חייב להיות בעברית בלבד - בהמשך יופיעו תרגומים של מונחים חשובים.
 
 
 מבנה הפידבק:
@@ -28,3 +29,94 @@
 
 חשוב מאוד: בפידבק, תכלול את ארבעת החלקים, ותחלק את הפידבק לפי הכותרות שתוארו לכל אחד מ-4 החלקים.
 הכותרות צריכות להופיע בbold.
+
+
+הפידבק חייב להיות בעברית בלבד!!
+חשוב!!!! שים לב שהמרקרים / סמנים הם רק לגבי התבטאויות של המטופל - ולא של המטפל!!!!
+
+לשם כך, תרגם את המונחים מה3RS Manual באופן הבא:
+
+Withdrawal rupture markers:
+מרקרים לקרע מסוג נסיעה
+
+Denial
+הכחשה
+
+Minimal response
+תגובה מצומצמת
+
+Abstract communication
+תקשורת מופשטת
+
+Avoidant storytelling and/or shifting topic
+העברת נושאים או גלישה לסיפורים לא קשורים
+
+Deferential and appeasing
+המטופל מרחיק את עצמו או מרצה
+
+Content/affect split
+פיצול רגש-תוכן
+
+Self-criticism and/or hopelessness
+ביקורת עצמית או חוסר אונים
+
+
+Confrontation rupture markers:
+מרקרים לקרעים מסוג עימות
+
+Complaints/concerns about the therapist
+תלונות לגבי המטפל
+
+Patient rejects therapist intervention
+תלונות לגבי ההתערבות אותה ביצע המטפל
+
+Complaints/concerns about the activities of therapy
+תלונות לגבי הפעולות בטיפול
+
+Complaints/concerns about the parameters of therapy
+תלונות לגבי הפרמטרים בטיפול
+
+Complaints/concerns about progress in therapy
+תלונות לגבי התקדמות בטיפול
+
+Patient defends self against therapist
+המטפל מתגונן בפני המטפל
+
+Efforts to control/pressure therapist
+המטופל מנסה לשלוט או ללחוץ על המטפל
+
+
+
+rupture resolution stratergies
+אסטרטגיות איחוי קרעים בברית הטיפולית
+
+
+Therapist clarifies a misunderstanding.
+המטפל מבהיר אי הבנה
+
+Therapist changes tasks or goals.
+המטפל משנה מטרות או משימות
+
+Therapist illustrates tasks or provides a rationale for treatment.
+המטפל מסביר את הרציונל לטיפול
+
+Therapist invites the patient to discuss thoughts or feelings with respect to the therapist or some aspect of therapy.
+המטפל מזמין את המטופל לדבר על מחשבות או רגשות לגבי הטיפול או המטפל
+
+Therapist acknowledges his/her contribution to a rupture.
+המטפל מכיר בתרומה שלו לקרע
+
+Therapist discloses his/her internal experience of the patient-therapist interaction.
+המטפל משתף בחוויה אישית שלו מהאינטראקציה
+
+Therapist links the rupture to larger interpersonal patterns between the patient and the therapist.
+המטפל מקשר את הקרע לדפוס בין אישי רחב יותר בינו לבין המטופל
+
+Therapist links the rupture to larger interpersonal patterns in the patient’s other relationships.
+המטפל מקשר את הקרע לדפוס בין אישי רחב יותר של המטופל
+
+Therapist validates the patient’s defensive posture.
+המטפל מתקף את העמדה המתגוננת של המטופל
+
+Therapist responds to a rupture by redirecting or refocusing the patient.
+המטפל מגיב לקרע על ידי שינוי כיוון או מיקוד של המטופל

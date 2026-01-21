@@ -34,9 +34,9 @@ const state = {
   personas: {}
 };
 
-const CHAT_DURATION_MINUTES = 2.5;
+const CHAT_DURATION_MINUTES = 8;
 const CHAT_DURATION_MS = CHAT_DURATION_MINUTES * 60 * 1000;
-const MID_PROMPT_MINUTES = 7;
+const MID_PROMPT_MINUTES = 9;
 const MID_PROMPT_MS = MID_PROMPT_MINUTES * 60 * 1000;
 
 const createMessageElement = (role, markdown) => {
@@ -44,7 +44,7 @@ const createMessageElement = (role, markdown) => {
   wrapper.classList.add("message");
   wrapper.classList.add(role === "user" ? "message-user" : "message-assistant");
 
-  const htmlContent = window.marked.parse(markdown, { mangle: false, headerIds: false });
+  const htmlContent = window.marked.parse(markdown, { mangle: false, headerIds: false, breaks: true });
   wrapper.innerHTML = htmlContent;
 
   return wrapper;

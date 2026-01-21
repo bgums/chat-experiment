@@ -56,9 +56,9 @@ const chatInstructions = fs.readFileSync(chatInstructionsPath, "utf-8");
 const midChatInstructions = fs.readFileSync(midChatInstructionsPath, "utf-8");
 const feedbackInstructions = fs.readFileSync(feedbackInstructionsPath, "utf-8");
 
-const CHAT_DURATION_MINUTES = 2.5;
+const CHAT_DURATION_MINUTES = 8;
 const CHAT_DURATION_MS = CHAT_DURATION_MINUTES * 60 * 1000;
-const MID_PROMPT_MINUTES = 7;
+const MID_PROMPT_MINUTES = 9;
 const MID_PROMPT_MS = MID_PROMPT_MINUTES * 60 * 1000;
 const FEEDBACK_MIN_PARTICIPANT_MESSAGES = 2;
 const FEEDBACK_FALLBACK_TEXT = "feedback could not be provided as the chat did not meet the requirements";
