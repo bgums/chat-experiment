@@ -364,14 +364,20 @@ export function saveFormResponse({ participantId, sessionNumber, formKey, respon
   const db = getDb();
   const payload = JSON.stringify(responses ?? {});
   return new Promise((resolve, reject) => {
-    db.run(
-      "INSERT INTO form_responses (participant_id, session_number, form_key, responses_json, session_persona_id) VALUES (?, ?, ?, ?, ?)",
-      [participantId, sessionNumber, formKey, payload, sessionPersonaId],
-      function onInsert(err) {
-        if (err) return reject(err);
-        resolve(this.lastID);
-      }
-    );
+    const deleteSql = `DELETE FROM form_responses WHERE participant_id = ? AND session_number = ? AND form_key = ? AND IFNULL(session_persona_id, -1) = IFNULL(?, -1)`;
+    db.serialize(() => {
+      db.run(deleteSql, [participantId, sessionNumber, formKey, sessionPersonaId], (delErr) => {
+        if (delErr) return reject(delErr);
+        db.run(
+          "INSERT INTO form_responses (participant_id, session_number, form_key, responses_json, session_persona_id) VALUES (?, ?, ?, ?, ?)",
+          [participantId, sessionNumber, formKey, payload, sessionPersonaId],
+          function onInsert(err) {
+            if (err) return reject(err);
+            resolve(this.lastID);
+          }
+        );
+      });
+    });
   });
 }
 

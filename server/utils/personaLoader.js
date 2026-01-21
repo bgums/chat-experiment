@@ -185,7 +185,7 @@ export function maskPersonaForUI(persona) {
     session: persona.session,
     name: persona.name,
     age: persona.age,
-    background_ui: persona.background_ui ?? persona.background ?? ""
+    background_ui: persona.background_ui ?? ""
   };
 }
 
@@ -227,15 +227,20 @@ export async function ensureSessionPersonas({ sessionId, participantId, sessionN
 
 export function buildPersonaPrompt(personaObj) {
   if (!personaObj) return "";
+  const missingValue = "לא צוין";
+  const formatLine = (label, value) => {
+    const hasValue = value !== undefined && value !== null && String(value).trim() !== "";
+    return `${label}: ${hasValue ? value : missingValue}`;
+  };
+
   const fields = [];
-  fields.push(`שם: ${personaObj.name}`);
-  if (personaObj.gender) fields.push(`מגדר: ${personaObj.gender}`);
-  if (personaObj.age) fields.push(`גיל: ${personaObj.age}`);
-  if (personaObj.main_markers) fields.push(`מרקרים של קרע: ${personaObj.main_markers}`);
-  if (personaObj.emotional_intelligence || personaObj.emotional_intelligence === 0) {
-    fields.push(`אינטליגנציה רגשית: ${personaObj.emotional_intelligence}`);
-  }
-  if (personaObj.style_of_expression) fields.push(`סגנון הבעה: ${personaObj.style_of_expression}`);
-  if (personaObj.background) fields.push(`רקע: ${personaObj.background}`);
+  fields.push(formatLine("שם", personaObj.name));
+  fields.push(formatLine("מגדר", personaObj.gender));
+  fields.push(formatLine("גיל", personaObj.age));
+  fields.push(formatLine("מרקרים של קרע", personaObj.main_markers));
+  fields.push(formatLine("אינטליגנציה רגשית", personaObj.emotional_intelligence));
+  fields.push(formatLine("סגנון הבעה", personaObj.style_of_expression));
+  fields.push(formatLine("רקע", personaObj.background));
+
   return fields.join("\n");
 }

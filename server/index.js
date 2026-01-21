@@ -18,6 +18,7 @@ import {
   savePersonaMessage,
   listMessagesByParticipant,
   listAllFormResponses,
+  listFormResponses,
   updateParticipantStatus,
   getSessionPersonas,
   saveSessionPersonaConversationId,
@@ -117,6 +118,23 @@ function combineChatPrompt(personaObj, includeMid = false) {
 function combineFeedbackPrompt(personaObj) {
   const personaPrompt = buildPersonaPrompt(personaObj);
   return [personaPrompt, feedbackInstructions].filter(Boolean).join("\n\n---\n\n");
+}
+
+function personaFieldStatus(personaObj) {
+  const required = [
+    "name",
+    "gender",
+    "age",
+    "main_markers",
+    "emotional_intelligence",
+    "style_of_expression",
+    "background"
+  ];
+  const missing = required.filter((key) => {
+    const v = personaObj?.[key];
+    return v === undefined || v === null || String(v).trim() === "";
+  });
+  return { required, missing };
 }
 
 function withPersonaDisplay(personaJson) {
@@ -450,6 +468,55 @@ app.post("/api/session/:token/forms/:formKey", async (req, res) => {
   }
 });
 
+app.get("/api/session/:token/forms/:formKey", async (req, res) => {
+  try {
+    const { token, formKey } = req.params;
+    const requestedSessionPersonaId = req.query?.sessionPersonaId ? Number(req.query.sessionPersonaId) : null;
+    const session = await getSessionByToken(token);
+    if (!session) {
+      return res.status(404).json({ error: "Session not found." });
+    }
+
+    const steps = getSessionSteps(session.sessionNumber);
+    const personaFormKeys = new Set(["post_chat", "post_feedback"]);
+
+    let allowed = steps.some((step) => step.type === "form" && step.key === formKey);
+    if (!allowed && personaFormKeys.has(formKey)) {
+      allowed = Boolean(requestedSessionPersonaId);
+    }
+    if (!allowed) {
+      return res.status(400).json({ error: "Form not part of this session." });
+    }
+
+    if (requestedSessionPersonaId) {
+      const personaRecord = await getSessionPersona(requestedSessionPersonaId);
+      if (!personaRecord || personaRecord.sessionId !== session.sessionId) {
+        return res.status(400).json({ error: "Persona not linked to this session." });
+      }
+    }
+
+    const allResponses = await listFormResponses({
+      participantId: session.participantId,
+      sessionNumber: session.sessionNumber
+    });
+
+    const match = allResponses
+      .filter((row) => row.formKey === formKey)
+      .find((row) => {
+        const rowPersonaId = row.sessionPersonaId ? Number(row.sessionPersonaId) : null;
+        if (requestedSessionPersonaId) {
+          return rowPersonaId === requestedSessionPersonaId;
+        }
+        return rowPersonaId === null;
+      });
+
+    res.json({ responses: match?.responses || {} });
+  } catch (error) {
+    console.error("Failed to load form responses", error);
+    res.status(500).json({ error: error?.message || "Could not load form responses." });
+  }
+});
+
 app.post("/api/session/:token/message", async (req, res) => {
   try {
     const sessionToken = req.params.token;
@@ -502,6 +569,7 @@ app.post("/api/session/:token/message", async (req, res) => {
     const shouldAttachMidInstructions = midPromptEligible && !personaRecord.midPromptSent;
 
     const instructions = combineChatPrompt(personaData, shouldAttachMidInstructions || personaRecord.midPromptSent);
+    const personaFields = personaFieldStatus(personaData);
 
     logPromptEvent("chat", {
       sessionNumber: session.sessionNumber,
@@ -509,7 +577,9 @@ app.post("/api/session/:token/message", async (req, res) => {
       sessionPersonaId,
       includeMid: shouldAttachMidInstructions || personaRecord.midPromptSent,
       conversationId,
-      instructionsPreview: instructions.slice(0, 1200)
+      personaFields,
+      instructionsLength: instructions.length,
+      instructions
     });
 
     const responsePayload = {
@@ -757,12 +827,16 @@ app.post("/api/session/:token/persona/:sessionPersonaId/feedback", async (req, r
     }
 
     const instructions = combineFeedbackPrompt(personaData);
+    const personaFields = personaFieldStatus(personaData);
+
     logPromptEvent("feedback", {
       sessionNumber: session.sessionNumber,
       participantCode: session.participantCode,
       sessionPersonaId,
       conversationId,
-      instructionsPreview: instructions.slice(0, 1200)
+      personaFields,
+      instructionsLength: instructions.length,
+      instructions
     });
 
     const response = await createResponse({

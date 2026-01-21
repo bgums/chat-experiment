@@ -19,6 +19,7 @@ let chatTimerInterval = null;
 let currentChatStep = null;
 let chatLocked = false;
 let midPrimeTimeout = null;
+let activeFormController = null;
 
 let moduleState = null;
 // Persist nextBtnRef across renders to avoid ReferenceError
@@ -64,6 +65,28 @@ const formatDuration = (ms) => {
   return `${minutes}:${seconds}`;
 };
 
+async function fetchSavedFormResponses(formKey, step = {}) {
+  if (!state.token) return { responses: {} };
+  const params = new URLSearchParams();
+  if (step.sessionPersonaId) {
+    params.set("sessionPersonaId", step.sessionPersonaId);
+  }
+  const query = params.toString();
+  const url = query
+    ? `/api/session/${state.token}/forms/${formKey}?${query}`
+    : `/api/session/${state.token}/forms/${formKey}`;
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) {
+      return { responses: {} };
+    }
+    return await resp.json();
+  } catch (error) {
+    console.error("fetchSavedFormResponses failed", error);
+    return { responses: {} };
+  }
+}
+
 const stopChatTimer = () => {
   if (chatTimerInterval) {
     clearInterval(chatTimerInterval);
@@ -103,9 +126,10 @@ const updateStepNavigationVisibility = (step) => {
     return;
   }
   stepBackBtn.style.display = state.currentStepIndex > 0 ? "" : "none";
-  stepForwardBtn.style.display = (state.steps && state.currentStepIndex < state.steps.length - 1) ? "" : "none";
+  // Always keep the forward button visible so the last step can move to the finished screen.
+  stepForwardBtn.style.display = state.steps && state.steps.length ? "" : "none";
   stepBackBtn.disabled = state.currentStepIndex === 0;
-  stepForwardBtn.disabled = state.currentStepIndex >= state.steps.length - 1;
+  stepForwardBtn.disabled = false;
 };
 
 const startChatTimer = (startIso) => {
@@ -174,7 +198,8 @@ function renderPlaceholder(text) {
   stepContainer.innerHTML = `<div class="placeholder">${text}</div>`;
 }
 
-function renderForm(formDef, step = {}) {
+function renderForm(formDef, step = {}, savedResponses = {}) {
+  activeFormController = null;
   const wrapper = document.createElement("div");
   wrapper.classList.add("step-card");
 
@@ -200,6 +225,15 @@ function renderForm(formDef, step = {}) {
   const formEl = document.createElement("form");
   formEl.classList.add("question-list");
 
+  const statusEl = document.createElement("div");
+  statusEl.classList.add("form-status");
+  statusEl.style.display = "none";
+  const setStatus = (text, variant = "muted") => {
+    statusEl.textContent = text;
+    statusEl.className = `form-status ${variant}`;
+    statusEl.style.display = text ? "block" : "none";
+  };
+
   (formDef.statements || []).forEach((statement, index) => {
     const block = document.createElement("div");
     block.classList.add("question");
@@ -208,6 +242,7 @@ function renderForm(formDef, step = {}) {
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
     checkbox.name = `statement_${index}`;
+    checkbox.required = true;
     label.prepend(checkbox);
     block.appendChild(label);
     formEl.appendChild(block);
@@ -225,6 +260,7 @@ function renderForm(formDef, step = {}) {
       textarea.name = item.id;
       textarea.rows = 3;
       textarea.dir = "auto";
+      textarea.dataset.optional = "true";
       block.appendChild(textarea);
     }
 
@@ -234,6 +270,7 @@ function renderForm(formDef, step = {}) {
       input.name = item.id;
       input.min = item.min ?? 0;
       input.max = item.max ?? 120;
+      input.required = true;
       block.appendChild(input);
     }
 
@@ -246,7 +283,7 @@ function renderForm(formDef, step = {}) {
         radio.type = "radio";
         radio.name = item.id;
         radio.value = option;
-        // Do not set required
+        radio.required = true;
         optionLabel.appendChild(radio);
         optionLabel.appendChild(document.createTextNode(option));
         list.appendChild(optionLabel);
@@ -263,6 +300,7 @@ function renderForm(formDef, step = {}) {
         checkbox.type = "checkbox";
         checkbox.name = `${item.id}[]`;
         checkbox.value = option;
+        checkbox.required = true;
         optionLabel.appendChild(checkbox);
         optionLabel.appendChild(document.createTextNode(option));
         list.appendChild(optionLabel);
@@ -280,7 +318,7 @@ function renderForm(formDef, step = {}) {
         radio.type = "radio";
         radio.name = item.id;
         radio.value = value;
-        // Do not set required
+        radio.required = true;
         optionLabel.appendChild(radio);
         optionLabel.appendChild(document.createTextNode(item.labels?.[value] || String(value)));
         scale.appendChild(optionLabel);
@@ -303,49 +341,224 @@ function renderForm(formDef, step = {}) {
     block.appendChild(input);
     formEl.appendChild(block);
   }
-
-  const submit = document.createElement("button");
-  submit.type = "submit";
-  submit.textContent = "שמור והמשך";
-  submit.classList.add("ghost-button");
-  formEl.appendChild(submit);
-
   wrapper.appendChild(formEl);
+  wrapper.appendChild(statusEl);
   stepContainer.innerHTML = "";
   stepContainer.appendChild(wrapper);
 
-  formEl.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const formData = new FormData(formEl);
-    const responses = {};
-    formData.forEach((value, key) => {
-      if (key.endsWith("[]")) {
-        const cleanKey = key.replace("[]", "");
-        responses[cleanKey] = responses[cleanKey] || [];
-        responses[cleanKey].push(value);
-      } else if (responses[key]) {
-        responses[key] = Array.isArray(responses[key]) ? responses[key].concat(value) : [responses[key], value];
-      } else {
-        responses[key] = value;
+  const applySavedResponses = (responses) => {
+    (formDef.statements || []).forEach((statement, idx) => {
+      const box = formEl.querySelector(`input[name="statement_${idx}"]`);
+      if (!box) return;
+      const val = responses[`statement_${idx}`];
+      if (val !== undefined) box.checked = Boolean(val);
+    });
+
+    (formDef.items || []).forEach((item) => {
+      const id = item.id;
+      const type = item.type;
+      const saved = responses[id];
+
+      if (type === "text") {
+        const textarea = formEl.querySelector(`textarea[name="${id}"]`);
+        if (textarea && saved !== undefined && saved !== null) {
+          textarea.value = String(saved);
+        }
+        return;
+      }
+
+      if (type === "number") {
+        const input = formEl.querySelector(`input[name="${id}"]`);
+        if (input && saved !== undefined && saved !== null && saved !== "") {
+          input.value = saved;
+        }
+        return;
+      }
+
+      if (type === "single") {
+        const radios = formEl.querySelectorAll(`input[name="${id}"]`);
+        radios.forEach((radio) => {
+          radio.checked = radio.value === String(saved);
+        });
+        return;
+      }
+
+      if (type === "multi") {
+        const arr = Array.isArray(saved) ? saved.map(String) : saved ? [String(saved)] : [];
+        const checkboxes = formEl.querySelectorAll(`input[name="${id}[]"]`);
+        checkboxes.forEach((cb) => {
+          cb.checked = arr.includes(cb.value);
+        });
+        return;
+      }
+
+      if (type === "likert") {
+        const radios = formEl.querySelectorAll(`input[name="${id}"]`);
+        radios.forEach((radio) => {
+          radio.checked = radio.value === String(saved);
+        });
       }
     });
 
-    try {
-      await fetch(`/api/session/${state.token}/forms/${formDef.key}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          responses,
-          sessionPersonaId: step.sessionPersonaId || null
-        })
-      });
-      state.currentStepIndex += 1;
-      renderCurrentStep();
-    } catch (error) {
-      renderPlaceholder("שגיאה בשמירת הטופס, נסו שוב.");
-      console.error(error);
+    if (formDef.requireSignature) {
+      const sigInput = formEl.querySelector("input[name=\"signature\"]");
+      if (sigInput && responses.signature !== undefined && responses.signature !== null) {
+        sigInput.value = String(responses.signature);
+      }
     }
-  });
+  };
+
+  const gatherResponses = () => {
+    const responses = {};
+    const missing = [];
+
+    (formDef.statements || []).forEach((statement, idx) => {
+      const box = formEl.querySelector(`input[name="statement_${idx}"]`);
+      const checked = Boolean(box?.checked);
+      responses[`statement_${idx}`] = checked;
+      if (!checked) missing.push(statement);
+    });
+
+    (formDef.items || []).forEach((item) => {
+      const id = item.id;
+      const type = item.type;
+
+      if (type === "text") {
+        const textarea = formEl.querySelector(`textarea[name="${id}"]`);
+        responses[id] = textarea?.value ?? "";
+        return;
+      }
+
+      if (type === "number") {
+        const input = formEl.querySelector(`input[name="${id}"]`);
+        const value = input?.value ?? "";
+        if (!value.trim()) {
+          missing.push(item.prompt || id);
+          responses[id] = "";
+        } else {
+          responses[id] = Number(value);
+        }
+        return;
+      }
+
+      if (type === "single") {
+        const checked = formEl.querySelector(`input[name="${id}"]:checked`);
+        if (!checked) {
+          missing.push(item.prompt || id);
+          responses[id] = "";
+        } else {
+          responses[id] = checked.value;
+        }
+        return;
+      }
+
+      if (type === "multi") {
+        const checkedBoxes = Array.from(formEl.querySelectorAll(`input[name="${id}[]"]:checked`));
+        const values = checkedBoxes.map((c) => c.value);
+        if (!values.length) missing.push(item.prompt || id);
+        responses[id] = values;
+        return;
+      }
+
+      if (type === "likert") {
+        const checked = formEl.querySelector(`input[name="${id}"]:checked`);
+        if (!checked) {
+          missing.push(item.prompt || id);
+          responses[id] = "";
+        } else {
+          responses[id] = Number(checked.value);
+        }
+      }
+    });
+
+    if (formDef.requireSignature) {
+      const sig = formEl.querySelector("input[name=\"signature\"]");
+      if (!sig?.value) missing.push("חתימה");
+      responses.signature = sig?.value || "";
+    }
+
+    return { responses, missingRequired: missing.filter(Boolean) };
+  };
+
+  let saveInFlight = null;
+  let lastSavedPayload = JSON.stringify(savedResponses || {});
+  let autosaveTimeout = null;
+
+  applySavedResponses(savedResponses || {});
+
+  const performSave = async ({ validate = false, showErrors = false } = {}) => {
+    const { responses, missingRequired } = gatherResponses();
+    if (validate && missingRequired.length) {
+      if (showErrors) {
+        setStatus(`נא להשלים: ${missingRequired.join(" · ")}`, "error");
+      }
+      return false;
+    }
+
+    setStatus("שומר...", "muted");
+
+    const payloadStr = JSON.stringify(responses);
+    if (payloadStr === lastSavedPayload && saveInFlight === null && !validate) {
+      setStatus("נשמר", "success");
+      return true;
+    }
+
+    if (saveInFlight) {
+      try {
+        await saveInFlight;
+      } catch (e) {
+        // swallow to retry below
+      }
+    }
+
+    saveInFlight = fetch(`/api/session/${state.token}/forms/${formDef.key}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        responses,
+        sessionPersonaId: step.sessionPersonaId || null
+      })
+    })
+      .then(async (resp) => {
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({}));
+          throw new Error(err?.error || "Failed to save form");
+        }
+        lastSavedPayload = payloadStr;
+        setStatus("נשמר", "success");
+        return true;
+      })
+      .catch((error) => {
+        console.error(error);
+        setStatus("שגיאה בשמירה. בדקו חיבור ונסו שוב.", "error");
+        return false;
+      })
+      .finally(() => {
+        saveInFlight = null;
+      });
+
+    return saveInFlight;
+  };
+
+  const scheduleAutosave = () => {
+    if (autosaveTimeout) clearTimeout(autosaveTimeout);
+    autosaveTimeout = setTimeout(() => {
+      performSave({ validate: false, showErrors: false });
+    }, 400);
+  };
+
+  formEl.addEventListener("input", scheduleAutosave);
+  formEl.addEventListener("change", scheduleAutosave);
+
+  activeFormController = {
+    async saveAndValidate() {
+      return performSave({ validate: true, showErrors: true });
+    },
+    teardown() {
+      if (autosaveTimeout) clearTimeout(autosaveTimeout);
+      activeFormController = null;
+    }
+  };
 }
 
 async function renderChat(step) {
@@ -533,7 +746,14 @@ async function renderCurrentStep() {
 
   const step = state.steps[state.currentStepIndex];
 
+  if (activeFormController?.teardown) {
+    activeFormController.teardown();
+  }
+
   if (!step) {
+    if (stepForwardBtn) {
+      stepForwardBtn.disabled = true;
+    }
     renderPlaceholder("כל השלבים הושלמו. ניתן לסגור את העמוד.");
     return;
   }
@@ -541,13 +761,24 @@ async function renderCurrentStep() {
   updateStepNavigationVisibility(step);
 
   if (step.type === "form") {
-    const response = await fetch(`/api/forms/${step.key}`);
-    if (!response.ok) {
-      renderPlaceholder("לא נמצא טופס עבור שלב זה.");
-      return;
+    try {
+      const [formResponse, savedResponse] = await Promise.all([
+        fetch(`/api/forms/${step.key}`),
+        fetchSavedFormResponses(step.key, step)
+      ]);
+
+      if (!formResponse.ok) {
+        renderPlaceholder("לא נמצא טופס עבור שלב זה.");
+        return;
+      }
+
+      const formDef = await formResponse.json();
+      const savedResponses = savedResponse?.responses || {};
+      renderForm(formDef, step, savedResponses);
+    } catch (error) {
+      console.error("Failed to load form", error);
+      renderPlaceholder("שגיאה בטעינת הטופס, נסו לרענן את העמוד.");
     }
-    const formDef = await response.json();
-    renderForm(formDef, step);
     return;
   }
 
@@ -754,9 +985,15 @@ stepBackBtn?.addEventListener("click", (e) => {
   }
 });
 
-stepForwardBtn?.addEventListener("click", (e) => {
+stepForwardBtn?.addEventListener("click", async (e) => {
   e.preventDefault();
-  if (state.steps && state.currentStepIndex < state.steps.length - 1) {
+  if (activeFormController) {
+    const ok = await activeFormController.saveAndValidate();
+    if (!ok) return;
+  }
+
+  // Allow advancing past the last configured step to show the finished screen.
+  if (state.steps && state.currentStepIndex < state.steps.length) {
     state.currentStepIndex++;
     renderCurrentStep();
   }

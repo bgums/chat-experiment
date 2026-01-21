@@ -298,6 +298,18 @@ body {
   box-shadow: 0 6px 12px rgba(15, 30, 80, 0.06);
 }
 
+.form-status {
+  margin-top: 8px;
+  font-size: 14px;
+}
+
+.form-status.success {
+  color: #2e7d32;
+}
+
+.form-status.error {
+  color: #c62828;
+}
 .step-card h3 {
   margin: 0 0 6px 0;
 }
