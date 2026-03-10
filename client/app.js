@@ -31,7 +31,8 @@ const state = {
   steps: [],
   currentStepIndex: 0,
   conversationId: null,
-  personas: {}
+  personas: {},
+  completionRequested: false
 };
 
 const CHAT_DURATION_MINUTES = 8;
@@ -65,6 +66,12 @@ const formatDuration = (ms) => {
   return `${minutes}:${seconds}`;
 };
 
+const updateTimerBadgeText = (elapsedMs) => {
+  if (!timerBadge) return;
+  const clampedElapsed = Math.min(Math.max(0, elapsedMs), CHAT_DURATION_MS);
+  timerBadge.textContent = `זמן שיחה: ${formatDuration(clampedElapsed)}`;
+};
+
 async function fetchSavedFormResponses(formKey, step = {}) {
   if (!state.token) return { responses: {} };
   const params = new URLSearchParams();
@@ -84,6 +91,16 @@ async function fetchSavedFormResponses(formKey, step = {}) {
   } catch (error) {
     console.error("fetchSavedFormResponses failed", error);
     return { responses: {} };
+  }
+}
+
+async function markSessionComplete() {
+  if (!state.token || state.completionRequested) return;
+  state.completionRequested = true;
+  try {
+    await fetch(`/api/session/${state.token}/complete`, { method: "POST" });
+  } catch (error) {
+    console.warn("Failed to mark session complete", error);
   }
 }
 
@@ -142,13 +159,15 @@ const startChatTimer = (startIso) => {
   const startMs = new Date(startIso).getTime();
   const limitMs = CHAT_DURATION_MS;
   const midMs = MID_PROMPT_MS;
+
+  updateTimerBadgeText(Date.now() - startMs);
+
   chatTimerInterval = setInterval(() => {
     const now = Date.now();
     const elapsed = now - startMs;
-    if (timerBadge) {
-      timerBadge.textContent = `זמן שיחה: ${formatDuration(elapsed)}`;
-    }
+    updateTimerBadgeText(elapsed);
     if (elapsed >= limitMs) {
+      updateTimerBadgeText(limitMs);
       setChatLockState(true, `חלפו ${CHAT_DURATION_MINUTES} דקות`);
       stopChatTimer();
     }
@@ -196,6 +215,71 @@ function setStepIndicator() {
 
 function renderPlaceholder(text) {
   stepContainer.innerHTML = `<div class="placeholder">${text}</div>`;
+}
+
+async function loadInstructionContent(formKey) {
+  if (!formKey) return null;
+  try {
+    const response = await fetch(`/api/forms/${formKey}`);
+    if (!response.ok) return null;
+    return await response.json();
+  } catch (error) {
+    return null;
+  }
+}
+
+async function renderParticipantInstruction(step) {
+  const content = await loadInstructionContent(step?.key);
+  const titleText = content?.title || "הנחיות";
+  const paragraphs = Array.isArray(content?.paragraphs) ? content.paragraphs : [];
+
+  const wrapper = document.createElement("div");
+  wrapper.classList.add("step-card");
+
+  const title = document.createElement("h3");
+  title.textContent = titleText;
+  wrapper.appendChild(title);
+
+  paragraphs.forEach((text) => {
+    const paragraph = document.createElement("p");
+    paragraph.textContent = text;
+    wrapper.appendChild(paragraph);
+  });
+
+  stepContainer.innerHTML = "";
+  stepContainer.appendChild(wrapper);
+}
+
+async function renderSessionCompletionScreen() {
+  const content = await loadInstructionContent("session_completion");
+  const sessionNumber = Number(state.session?.sessionNumber || 0);
+  const finalSessionNumbers = Array.isArray(content?.finalSessionNumbers)
+    ? content.finalSessionNumbers.map((n) => Number(n))
+    : [4];
+  const isFinalSession = finalSessionNumbers.includes(sessionNumber);
+
+  const regularContent = content?.regular || {};
+  const finalContent = content?.final || {};
+  const selectedContent = isFinalSession ? finalContent : regularContent;
+
+  const titleText = selectedContent?.title || "תודה על השתתפותכם";
+  const paragraphs = Array.isArray(selectedContent?.paragraphs) ? selectedContent.paragraphs : [];
+
+  const wrapper = document.createElement("div");
+  wrapper.classList.add("step-card");
+
+  const title = document.createElement("h3");
+  title.textContent = titleText;
+  wrapper.appendChild(title);
+
+  paragraphs.forEach((text) => {
+    const paragraph = document.createElement("p");
+    paragraph.textContent = text;
+    wrapper.appendChild(paragraph);
+  });
+
+  stepContainer.innerHTML = "";
+  stepContainer.appendChild(wrapper);
 }
 
 function renderForm(formDef, step = {}, savedResponses = {}) {
@@ -309,21 +393,74 @@ function renderForm(formDef, step = {}, savedResponses = {}) {
     }
 
     if (item.type === "likert") {
-      const scale = document.createElement("div");
-      scale.classList.add("likert-scale");
+      const container = document.createElement("div");
+      container.classList.add("likert-slider-container");
+      
       const [min, max] = item.scale || [1, 5];
+      
+      const slider = document.createElement("input");
+      slider.type = "range";
+      slider.name = item.id;
+      slider.min = min;
+      slider.max = max;
+      slider.step = 1;
+      slider.classList.add("likert-slider");
+      slider.required = !!item.required;
+      
+      // Hidden input to ensure value is captured during form serialization if needed, 
+      // but value is usually captured by name on the slider itself.
+      
+      const labelsRow = document.createElement("div");
+      labelsRow.classList.add("likert-labels");
+      labelsRow.dataset.scale = (max - min + 1);
+      
+      const updateBoldness = (val) => {
+        labelsRow.querySelectorAll(".likert-label-item").forEach(el => {
+          if (el.dataset.value === String(val)) {
+            el.classList.add("selected");
+          } else {
+            el.classList.remove("selected");
+          }
+        });
+      };
+
       for (let value = min; value <= max; value += 1) {
-        const optionLabel = document.createElement("label");
-        const radio = document.createElement("input");
-        radio.type = "radio";
-        radio.name = item.id;
-        radio.value = value;
-        radio.required = true;
-        optionLabel.appendChild(radio);
-        optionLabel.appendChild(document.createTextNode(item.labels?.[value] || String(value)));
-        scale.appendChild(optionLabel);
+        const labelItem = document.createElement("div");
+        labelItem.classList.add("likert-label-item");
+        labelItem.dataset.value = value;
+        
+        const numSpan = document.createElement("span");
+        numSpan.className = "likert-num";
+        numSpan.textContent = value;
+        
+        const textSpan = document.createElement("span");
+        textSpan.className = "likert-text";
+        textSpan.textContent = item.labels?.[value] || "";
+        
+        labelItem.appendChild(numSpan);
+        labelItem.appendChild(textSpan);
+        labelsRow.appendChild(labelItem);
       }
-      block.appendChild(scale);
+      
+      slider.addEventListener("input", (e) => {
+        updateBoldness(e.target.value);
+      });
+      
+      // Auto-set the initial boldness after a short delay to ensure rendering is complete
+      setTimeout(() => updateBoldness(slider.value), 0);
+
+      // Initial state
+      if (item.required) {
+        // If required and no saved response, we might want a default or just wait for first touch.
+        // For sliders, they always have a value (usually middle).
+      }
+
+      container.appendChild(slider);
+      container.appendChild(labelsRow);
+      block.appendChild(container);
+      
+      // Store a reference to update boldness when responses are applied
+      container._updateBoldness = updateBoldness;
     }
 
     formEl.appendChild(block);
@@ -393,10 +530,14 @@ function renderForm(formDef, step = {}, savedResponses = {}) {
       }
 
       if (type === "likert") {
-        const radios = formEl.querySelectorAll(`input[name="${id}"]`);
-        radios.forEach((radio) => {
-          radio.checked = radio.value === String(saved);
-        });
+        const slider = formEl.querySelector(`input[name="${id}"]`);
+        if (slider && saved !== undefined && saved !== null && saved !== "") {
+          slider.value = String(saved);
+          const container = slider.closest(".likert-slider-container");
+          if (container && container._updateBoldness) {
+            container._updateBoldness(saved);
+          }
+        }
       }
     });
 
@@ -461,12 +602,13 @@ function renderForm(formDef, step = {}, savedResponses = {}) {
       }
 
       if (type === "likert") {
-        const checked = formEl.querySelector(`input[name="${id}"]:checked`);
-        if (!checked) {
-          missing.push(item.prompt || id);
+        const slider = formEl.querySelector(`input[name="${id}"]`);
+        if (!slider) {
           responses[id] = "";
         } else {
-          responses[id] = Number(checked.value);
+          // A slider always has a value, but we might want to check for "untouched" state if we really care.
+          // For simplicity, we just take the current value.
+          responses[id] = Number(slider.value);
         }
       }
     });
@@ -578,7 +720,7 @@ async function renderChat(step) {
 
   const intro = document.createElement("div");
   intro.classList.add("step-card");
-  intro.innerHTML = `<h3>שיחת טיפול</h3><p class="muted">שיחה עם המטופל/ת הנוכחי/ת. ההודעה הראשונה מתחילה את הטיימר.</p>`;
+  intro.innerHTML = `<h3>שיחת טיפול</h3><p class="muted">לרשותכם 8 דקות לשיחה עם המטופל/ת. במידה והשיחה גורמת לכם לאי נעימות מכל סיבה, תוכלו לצאת מהניסוי בכל שלב.</p>`;
   chatSectionEl.appendChild(intro);
 
   const metaRow = document.createElement("div");
@@ -648,7 +790,9 @@ async function renderChat(step) {
       scheduleMidPrime(firstStart, step.sessionPersonaId);
       const elapsed = Date.now() - new Date(firstStart).getTime();
       if (elapsed >= CHAT_DURATION_MS) {
+        updateTimerBadgeText(CHAT_DURATION_MS);
         setChatLockState(true, `חלפו ${CHAT_DURATION_MINUTES} דקות`);
+        stopChatTimer();
       }
     }
     updateStepNavigationVisibility(step);
@@ -751,10 +895,11 @@ async function renderCurrentStep() {
   }
 
   if (!step) {
+    await markSessionComplete();
     if (stepForwardBtn) {
       stepForwardBtn.disabled = true;
     }
-    renderPlaceholder("כל השלבים הושלמו. ניתן לסגור את העמוד.");
+    renderSessionCompletionScreen();
     return;
   }
 
@@ -787,6 +932,11 @@ async function renderCurrentStep() {
     return;
   }
 
+  if (step.type === "participant_instruction") {
+    await renderParticipantInstruction(step);
+    return;
+  }
+
   if (step.type === "module") {
     const response = await fetch(`/api/modules/${step.key}`);
     if (!response.ok) {
@@ -803,7 +953,181 @@ async function renderCurrentStep() {
     return;
   }
 
+  if (step.type === "reading_task") {
+    await renderReadingTask(step);
+    return;
+  }
+
   renderPlaceholder("סוג שלב לא מוכר בקובץ התצורה.");
+}
+
+async function renderReadingTask(step) {
+  stopChatTimer();
+  if (midPrimeTimeout) {
+    clearTimeout(midPrimeTimeout);
+    midPrimeTimeout = null;
+  }
+  setChatLockState(false);
+
+  const half = step.resolvedHalf;
+  if (!half) {
+    renderPlaceholder("שגיאה: לא הוגדר חצי קריאה למפגש זה.");
+    return;
+  }
+
+  const [contentResp, responsesResp] = await Promise.all([
+    fetch(`/api/session/${state.token}/reading/${half}`),
+    fetch(`/api/session/${state.token}/reading/${half}/responses`)
+  ]);
+
+  if (!contentResp.ok) {
+    renderPlaceholder("לא ניתן לטעון את משימת הקריאה.");
+    return;
+  }
+
+  const content = await contentResp.json();
+  const responsesPayload = responsesResp.ok ? await responsesResp.json() : { responses: [] };
+  const chunks = Array.isArray(content.chunks) ? content.chunks : [];
+  const existingResponses = responsesPayload.responses || [];
+
+  if (!chunks.length) {
+    stepContainer.innerHTML = `
+      <div class="step-card">
+        <h3>${content.title || "קריאה"}</h3>
+        <p class="muted">תוכן הקריאה טרם הוזן. ניתן להמשיך לשלב הבא.</p>
+      </div>
+    `;
+    return;
+  }
+
+  const responseMap = new Map(
+    existingResponses.map((row) => [`${Number(row.chunkIndex)}::${String(row.questionId || "")}`, row.answer ?? row.answerText ?? ""])
+  );
+
+  let activeChunkIndex = 0;
+  for (let idx = 0; idx < chunks.length; idx += 1) {
+    const questions = chunks[idx]?.questions || [];
+    const hasAllAnswers = questions.every((q) => responseMap.has(`${idx}::${String(q.id || "")}`));
+    if (!hasAllAnswers) {
+      activeChunkIndex = idx;
+      break;
+    }
+    activeChunkIndex = Math.min(idx + 1, chunks.length - 1);
+  }
+
+  const drawChunk = () => {
+    const chunk = chunks[activeChunkIndex] || { paragraphs: [], questions: [] };
+    const card = document.createElement("div");
+    card.className = "step-card module-card";
+
+    const title = document.createElement("h3");
+    title.textContent = content.title || "משימת קריאה";
+    card.appendChild(title);
+
+    const progress = document.createElement("p");
+    progress.className = "muted";
+    progress.textContent = `קטע ${activeChunkIndex + 1} מתוך ${chunks.length}`;
+    card.appendChild(progress);
+
+    (chunk.paragraphs || []).forEach((paragraph) => {
+      const paraEl = document.createElement("p");
+      paraEl.textContent = paragraph;
+      card.appendChild(paraEl);
+    });
+
+    const formEl = document.createElement("form");
+    formEl.className = "question-list";
+    const questions = chunk.questions || [];
+    questions.forEach((question, qIdx) => {
+      const qid = String(question.id || `q${qIdx + 1}`);
+      const block = document.createElement("div");
+      block.className = "question";
+      const label = document.createElement("label");
+      label.textContent = question.prompt || qid;
+      block.appendChild(label);
+
+      const input = document.createElement("textarea");
+      input.rows = 3;
+      input.name = qid;
+      input.required = true;
+      input.value = String(responseMap.get(`${activeChunkIndex}::${qid}`) || "");
+      block.appendChild(input);
+
+      formEl.appendChild(block);
+    });
+
+    const footer = document.createElement("div");
+    footer.className = "module-footer";
+
+    const prevBtn = document.createElement("button");
+    prevBtn.type = "button";
+    prevBtn.className = "ghost-button";
+    prevBtn.textContent = "הקודם";
+    prevBtn.disabled = activeChunkIndex === 0;
+    prevBtn.addEventListener("click", () => {
+      if (activeChunkIndex > 0) {
+        activeChunkIndex -= 1;
+        drawChunk();
+      }
+    });
+
+    const nextBtn = document.createElement("button");
+    nextBtn.type = "submit";
+    nextBtn.className = "ghost-button";
+    nextBtn.textContent = activeChunkIndex === chunks.length - 1 ? "סיום הקריאה" : "המשך";
+
+    footer.appendChild(prevBtn);
+    footer.appendChild(nextBtn);
+    formEl.appendChild(footer);
+
+    formEl.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      for (const question of questions) {
+        const qid = String(question.id || "");
+        const field = formEl.elements.namedItem(qid);
+        const answer = typeof field?.value === "string" ? field.value.trim() : "";
+        if (!answer) {
+          return;
+        }
+      }
+
+      nextBtn.disabled = true;
+      try {
+        for (const question of questions) {
+          const qid = String(question.id || "");
+          const field = formEl.elements.namedItem(qid);
+          const answer = typeof field?.value === "string" ? field.value.trim() : "";
+          await fetch(`/api/session/${state.token}/reading/${half}/response`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chunkIndex: activeChunkIndex,
+              questionId: qid,
+              questionPrompt: question.prompt || qid,
+              answer
+            })
+          });
+          responseMap.set(`${activeChunkIndex}::${qid}`, answer);
+        }
+      } finally {
+        nextBtn.disabled = false;
+      }
+
+      if (activeChunkIndex < chunks.length - 1) {
+        activeChunkIndex += 1;
+        drawChunk();
+      } else {
+        state.currentStepIndex += 1;
+        await renderCurrentStep();
+      }
+    });
+
+    card.appendChild(formEl);
+    stepContainer.innerHTML = "";
+    stepContainer.appendChild(card);
+  };
+
+  drawChunk();
 }
 
 function renderModule(moduleDef) {
@@ -1007,6 +1331,11 @@ async function loadSession() {
 
   try {
     const response = await fetch(`/api/session/${state.token}`);
+    if (response.status === 401) {
+      renderPlaceholder("המפגש נעול. יש להתחבר עם שם משתמש וסיסמת מנהל כדי לצפות בקישור זה.");
+      statusText.textContent = "המפגש נעול - נדרשת התחברות מנהל";
+      return;
+    }
     if (!response.ok) {
       renderPlaceholder("לא נמצא מפגש עבור הקישור הזה.");
       statusText.textContent = "קישור לא תקין. פנו לחוקר לקבלת קישור חדש.";
@@ -1016,6 +1345,7 @@ async function loadSession() {
     const data = await response.json();
     state.session = data;
     state.steps = data.steps || [];
+    state.completionRequested = false;
     state.conversationId = data.conversationId || null;
     if (statusText) {
       if (Number(data.totalSessions) === 1) {

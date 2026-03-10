@@ -1,49 +1,83 @@
 {
-  "defaultTotalSessions": 1,
-  "sessions": [
-    {
-      "session": 1,
-      "label": "מפגש ראשון",
-      "steps": [
-        { "type": "form", "key": "consent" },
-        { "type": "form", "key": "demographics" },
-        { "type": "module", "key": "rupture_repair_3rs" },
-        { "type": "chat" },
-        { "type": "form", "key": "end_session", "position": "after_personas" }
+  "defaultTotalSessions": 4,
+  "groups": {
+    "experimental": {
+      "label": "קבוצת ניסוי",
+      "sessions": [
+        {
+          "session": 1,
+          "label": "מפגש ראשון",
+          "steps": [
+            { "type": "form", "key": "consent" },
+            { "type": "form", "key": "demographics" },
+            { "type": "module", "key": "rupture_repair_3rs" },
+            { "type": "chat" }
+          ]
+        },
+        {
+          "session": 2,
+          "label": "מפגש שני",
+          "steps": [
+            { "type": "form", "key": "consent" },
+            { "type": "chat" }
+          ]
+        },
+        {
+          "session": 3,
+          "label": "מפגש שלישי",
+          "steps": [
+            { "type": "form", "key": "consent" },
+            { "type": "chat" }
+          ]
+        },
+        {
+          "session": 4,
+          "label": "מפגש רביעי",
+          "steps": [
+            { "type": "form", "key": "consent" },
+            { "type": "chat" }
+          ]
+        }
       ]
     },
-    {
-      "session": 2,
-      "label": "מפגש שני",
-      "steps": [
-        { "type": "form", "key": "consent" },
-        { "type": "form", "key": "demographics" },
-        { "type": "module", "key": "rupture_repair_3rs" },
-        { "type": "chat" },
-        { "type": "form", "key": "end_session", "position": "after_personas" }
-      ]
-    },
-    {
-      "session": 3,
-      "label": "מפגש שלישי",
-      "steps": [
-        { "type": "form", "key": "consent" },
-        { "type": "form", "key": "demographics" },
-        { "type": "module", "key": "rupture_repair_3rs" },
-        { "type": "chat" },
-        { "type": "form", "key": "end_session", "position": "after_personas" }
-      ]
-    },
-    {
-      "session": 4,
-      "label": "מפגש רביעי",
-      "steps": [
-        { "type": "form", "key": "consent" },
-        { "type": "form", "key": "demographics" },
-        { "type": "module", "key": "rupture_repair_3rs" },
-        { "type": "chat" },
-        { "type": "form", "key": "end_session", "position": "after_personas" }
+    "control": {
+      "label": "קבוצת ביקורת",
+      "sessions": [
+        {
+          "session": 1,
+          "label": "מפגש ראשון",
+          "steps": [
+            { "type": "form", "key": "consent" },
+            { "type": "form", "key": "demographics" },
+            { "type": "module", "key": "rupture_repair_3rs" },
+            { "type": "chat" }
+          ]
+        },
+        {
+          "session": 2,
+          "label": "מפגש שני",
+          "steps": [
+            { "type": "form", "key": "consent" },
+            { "type": "reading_task", "key": "book_chapter", "halfSource": "reading_order", "halfOrder": 1 }
+          ]
+        },
+        {
+          "session": 3,
+          "label": "מפגש שלישי",
+          "steps": [
+            { "type": "form", "key": "consent" },
+            { "type": "reading_task", "key": "book_chapter", "halfSource": "reading_order", "halfOrder": 2 }
+          ]
+        },
+        {
+          "session": 4,
+          "label": "מפגש רביעי",
+          "steps": [
+            { "type": "form", "key": "consent" },
+            { "type": "chat" }
+          ]
+        }
       ]
     }
-  ]
+  }
 }

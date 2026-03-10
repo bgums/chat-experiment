@@ -32,8 +32,10 @@
         </div>
 
         <form id="invite-form" class="inline-form" style="font-family: inherit;">
-          <label class="muted" for="session-select" style="font-family: inherit;">בחרו קבוצה (מפגש):</label>
-          <select id="session-select" name="sessionNumber" style="font-family: inherit; font-size: 1rem; padding: 0.5em; border-radius: 6px; border: 1px solid #ccc; background: #fff; color: #222;"></select>
+          <label class="muted" for="group-select" style="font-family: inherit;">קבוצה:</label>
+          <select id="group-select" name="groupAssignment" style="font-family: inherit; font-size: 1rem; padding: 0.5em; border-radius: 6px; border: 1px solid #ccc; background: #fff; color: #222;"></select>
+          <label class="muted" for="reading-order-select" style="font-family: inherit;">סדר קריאה (ביקורת):</label>
+          <select id="reading-order-select" name="readingOrder" style="font-family: inherit; font-size: 1rem; padding: 0.5em; border-radius: 6px; border: 1px solid #ccc; background: #fff; color: #222;"></select>
           <button type="submit" style="font-family: inherit; font-size: 1rem; padding: 0.5em 1em; border-radius: 6px; border: none; background: #2d7ff9; color: #fff; cursor: pointer;">צור הזמנה</button>
         </form>
 
@@ -64,6 +66,23 @@
         </div>
 
         <div class="table" id="forms-table"></div>
+      </section>
+
+      <section class="panel admin" id="reset-session-section">
+        <div class="panel-header">
+          <div>
+            <h2>איפוס מפגש</h2>
+            <p class="muted">מאפס מפגש לפי token כדי שהמשתתף יתחיל מחדש.</p>
+          </div>
+        </div>
+
+        <form id="reset-session-form" class="inline-form" style="font-family: inherit;">
+          <label class="muted" for="reset-session-token" style="font-family: inherit;">Session token:</label>
+          <input id="reset-session-token" name="token" type="text" required style="font-family: inherit; font-size: 1rem; padding: 0.5em; border-radius: 6px; border: 1px solid #ccc; background: #fff; color: #222; min-width: 340px;" />
+          <button type="submit" style="font-family: inherit; font-size: 1rem; padding: 0.5em 1em; border-radius: 6px; border: none; background: #2d7ff9; color: #fff; cursor: pointer;">אפס מפגש</button>
+        </form>
+
+        <div id="reset-session-result" class="card muted"></div>
       </section>
 
       <div class="modal" id="messages-modal" hidden>

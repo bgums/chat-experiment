@@ -41,7 +41,9 @@ function createDatabase() {
       CREATE TABLE IF NOT EXISTS participants (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         participant_code TEXT UNIQUE NOT NULL,
-        total_sessions INTEGER DEFAULT 2,
+        total_sessions INTEGER DEFAULT 4,
+        group_assignment TEXT DEFAULT 'experimental',
+        reading_order TEXT DEFAULT 'withdrawal_first',
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         status TEXT DEFAULT 'invited'
       )
@@ -107,10 +109,33 @@ function createDatabase() {
         FOREIGN KEY(participant_id) REFERENCES participants(id)
       )
     `);
+
+    db.run(`
+      CREATE TABLE IF NOT EXISTS reading_task_responses (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        participant_id INTEGER NOT NULL,
+        session_number INTEGER NOT NULL,
+        reading_key TEXT NOT NULL,
+        reading_half TEXT NOT NULL,
+        chunk_index INTEGER NOT NULL,
+        question_id TEXT NOT NULL,
+        question_prompt TEXT,
+        answer_text TEXT,
+        answer_json TEXT,
+        answered_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(participant_id) REFERENCES participants(id)
+      )
+    `);
   });
 
   // Lightweight migrations for existing databases
   db.serialize(() => {
+    ensureColumnExists(db, "participants", "group_assignment", "TEXT DEFAULT 'experimental'").catch((err) =>
+      console.error("Failed to add group_assignment column", err)
+    );
+    ensureColumnExists(db, "participants", "reading_order", "TEXT DEFAULT 'withdrawal_first'").catch((err) =>
+      console.error("Failed to add reading_order column", err)
+    );
     ensureColumnExists(db, "messages", "session_persona_id", "INTEGER").catch((err) =>
       console.error("Failed to add session_persona_id column", err)
     );
@@ -131,16 +156,19 @@ function getDb() {
   return dbInstance;
 }
 
-export function createInvite({ sessionNumber = 1 } = {}) {
+export function createInvite({ groupAssignment = "experimental", readingOrder = "withdrawal_first" } = {}) {
   const db = getDb();
   const participantCode = randomUUID();
-  const totalSessions = 1;
-  const targetSessionNumber = Number(sessionNumber) || 1;
+  const totalSessions = 4;
+  const normalizedGroup = groupAssignment === "control" ? "control" : "experimental";
+  const normalizedReadingOrder = readingOrder === "confrontation_first"
+    ? "confrontation_first"
+    : "withdrawal_first";
 
   return new Promise((resolve, reject) => {
     db.run(
-      "INSERT INTO participants (participant_code, total_sessions) VALUES (?, ?)",
-      [participantCode, totalSessions],
+      "INSERT INTO participants (participant_code, total_sessions, group_assignment, reading_order) VALUES (?, ?, ?, ?)",
+      [participantCode, totalSessions, normalizedGroup, normalizedReadingOrder],
       function insertParticipant(err) {
         if (err) return reject(err);
 
@@ -150,9 +178,11 @@ export function createInvite({ sessionNumber = 1 } = {}) {
           "INSERT INTO sessions (participant_id, session_number, session_token) VALUES (?, ?, ?)"
         );
 
-        const token = randomUUID();
-        insertSession.run(participantId, targetSessionNumber, token);
-        sessionTokens.push({ sessionNumber: targetSessionNumber, token });
+        for (let n = 1; n <= totalSessions; n += 1) {
+          const token = randomUUID();
+          insertSession.run(participantId, n, token);
+          sessionTokens.push({ sessionNumber: n, token });
+        }
 
         insertSession.finalize((finalizeErr) => {
           if (finalizeErr) return reject(finalizeErr);
@@ -175,6 +205,8 @@ export function listParticipants() {
       p.participant_code,
       p.status,
       p.total_sessions,
+      p.group_assignment,
+      p.reading_order,
       p.created_at,
       s.id AS session_id,
       s.session_number,
@@ -198,6 +230,8 @@ export function listParticipants() {
             id: row.participant_id,
             participantCode: row.participant_code,
             status: row.status,
+            groupAssignment: row.group_assignment,
+            readingOrder: row.reading_order,
             createdAt: row.created_at,
             totalSessions: row.total_sessions,
             completedSessions: 0,
@@ -252,7 +286,7 @@ export function getParticipantByCode(participantCode) {
   const db = getDb();
   return new Promise((resolve, reject) => {
     db.get(
-      "SELECT id, participant_code AS participantCode, total_sessions AS totalSessions, status, created_at AS createdAt FROM participants WHERE participant_code = ?",
+      "SELECT id, participant_code AS participantCode, total_sessions AS totalSessions, status, group_assignment AS groupAssignment, reading_order AS readingOrder, created_at AS createdAt FROM participants WHERE participant_code = ?",
       [participantCode],
       (err, row) => {
         if (err) return reject(err);
@@ -266,7 +300,8 @@ export function getSessionByToken(sessionToken) {
   const db = getDb();
   const query = `
     SELECT s.id AS session_id, s.session_number, s.status AS session_status, s.conversation_id,
-           s.started_at, s.completed_at, p.id AS participant_id, p.participant_code, p.total_sessions, p.status AS participant_status
+          s.started_at, s.completed_at, p.id AS participant_id, p.participant_code, p.total_sessions, p.status AS participant_status,
+          p.group_assignment, p.reading_order
     FROM sessions s
     JOIN participants p ON p.id = s.participant_id
     WHERE s.session_token = ?
@@ -288,7 +323,9 @@ export function getSessionByToken(sessionToken) {
         participantId: row.participant_id,
         participantCode: row.participant_code,
         participantStatus: row.participant_status,
-        totalSessions: row.total_sessions
+        totalSessions: row.total_sessions,
+        groupAssignment: row.group_assignment,
+        readingOrder: row.reading_order
       });
     });
   });
@@ -317,30 +354,6 @@ export function markSessionCompleted(sessionId) {
       function updateErr(err) {
         if (err) return reject(err);
         resolve(true);
-      }
-    );
-  });
-}
-
-export function saveConversationId(sessionId, conversationId) {
-  const db = getDb();
-  return new Promise((resolve, reject) => {
-    db.run("UPDATE sessions SET conversation_id = ? WHERE id = ?", [conversationId, sessionId], function onUpdate(err) {
-      if (err) return reject(err);
-      resolve(true);
-    });
-  });
-}
-
-export function saveMessage({ participantId, sessionNumber, role, content }) {
-  const db = getDb();
-  return new Promise((resolve, reject) => {
-    db.run(
-      "INSERT INTO messages (participant_id, session_number, role, content, session_persona_id, conversation_id) VALUES (?, ?, ?, ?, ?, ?)",
-      [participantId, sessionNumber, role, content, null, null],
-      function onInsert(err) {
-        if (err) return reject(err);
-        resolve(this.lastID);
       }
     );
   });
@@ -377,23 +390,6 @@ export function saveFormResponse({ participantId, sessionNumber, formKey, respon
           }
         );
       });
-    });
-  });
-}
-
-export function listMessages({ participantId, sessionNumber }) {
-  const db = getDb();
-  const query = `
-    SELECT role, content, created_at
-    FROM messages
-    WHERE participant_id = ? AND session_number = ?
-    ORDER BY id ASC
-  `;
-
-  return new Promise((resolve, reject) => {
-    db.all(query, [participantId, sessionNumber], (err, rows) => {
-      if (err) return reject(err);
-      resolve(rows || []);
     });
   });
 }
@@ -644,11 +640,218 @@ export function updateParticipantStatus(participantId, status) {
   });
 }
 
+export function saveReadingTaskResponse({
+  participantId,
+  sessionNumber,
+  readingKey,
+  readingHalf,
+  chunkIndex,
+  questionId,
+  questionPrompt,
+  answer
+}) {
+  const db = getDb();
+  const answerText = answer == null ? "" : String(answer);
+  const answerJson = JSON.stringify({ value: answer });
+
+  return new Promise((resolve, reject) => {
+    db.serialize(() => {
+      db.run(
+        `DELETE FROM reading_task_responses
+         WHERE participant_id = ?
+           AND session_number = ?
+           AND reading_key = ?
+           AND reading_half = ?
+           AND chunk_index = ?
+           AND question_id = ?`,
+        [participantId, sessionNumber, readingKey, readingHalf, chunkIndex, questionId],
+        (deleteErr) => {
+          if (deleteErr) return reject(deleteErr);
+
+          db.run(
+            `INSERT INTO reading_task_responses
+            (participant_id, session_number, reading_key, reading_half, chunk_index, question_id, question_prompt, answer_text, answer_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              participantId,
+              sessionNumber,
+              readingKey,
+              readingHalf,
+              chunkIndex,
+              questionId,
+              questionPrompt || null,
+              answerText,
+              answerJson
+            ],
+            function onInsert(err) {
+              if (err) return reject(err);
+              resolve(this.lastID);
+            }
+          );
+        }
+      );
+    });
+  });
+}
+
+export function listReadingTaskResponses({ participantId, sessionNumber, readingKey, readingHalf }) {
+  const db = getDb();
+  const query = `
+    SELECT id,
+           participant_id AS participantId,
+           session_number AS sessionNumber,
+           reading_key AS readingKey,
+           reading_half AS readingHalf,
+           chunk_index AS chunkIndex,
+           question_id AS questionId,
+           question_prompt AS questionPrompt,
+           answer_text AS answerText,
+           answer_json AS answerJson,
+           answered_at AS answeredAt
+    FROM reading_task_responses
+    WHERE participant_id = ?
+      AND session_number = ?
+      AND reading_key = ?
+      AND reading_half = ?
+    ORDER BY chunk_index ASC, id ASC
+  `;
+
+  return new Promise((resolve, reject) => {
+    db.all(query, [participantId, sessionNumber, readingKey, readingHalf], (err, rows) => {
+      if (err) return reject(err);
+      resolve(
+        (rows || []).map((row) => {
+          let parsed = null;
+          try {
+            parsed = JSON.parse(row.answerJson || "null");
+          } catch (e) {
+            parsed = null;
+          }
+          return {
+            id: row.id,
+            participantId: row.participantId,
+            sessionNumber: row.sessionNumber,
+            readingKey: row.readingKey,
+            readingHalf: row.readingHalf,
+            chunkIndex: row.chunkIndex,
+            questionId: row.questionId,
+            questionPrompt: row.questionPrompt,
+            answerText: row.answerText,
+            answer: parsed?.value ?? row.answerText,
+            answeredAt: row.answeredAt
+          };
+        })
+      );
+    });
+  });
+}
+
+export function resetSessionByToken(sessionToken) {
+  const db = getDb();
+
+  const runSql = (sql, params = []) => new Promise((resolve, reject) => {
+    db.run(sql, params, function onRun(err) {
+      if (err) return reject(err);
+      resolve(this);
+    });
+  });
+
+  const getSql = (sql, params = []) => new Promise((resolve, reject) => {
+    db.get(sql, params, (err, row) => {
+      if (err) return reject(err);
+      resolve(row || null);
+    });
+  });
+
+  const allSql = (sql, params = []) => new Promise((resolve, reject) => {
+    db.all(sql, params, (err, rows) => {
+      if (err) return reject(err);
+      resolve(rows || []);
+    });
+  });
+
+  return new Promise((resolve, reject) => {
+    db.serialize(async () => {
+      try {
+        const session = await getSql(
+          `SELECT s.id AS sessionId,
+                  s.participant_id AS participantId,
+                  s.session_number AS sessionNumber,
+                  p.participant_code AS participantCode
+           FROM sessions s
+           JOIN participants p ON p.id = s.participant_id
+           WHERE s.session_token = ?
+           LIMIT 1`,
+          [sessionToken]
+        );
+
+        if (!session) {
+          resolve(null);
+          return;
+        }
+
+        await runSql("BEGIN TRANSACTION");
+        await runSql(
+          `UPDATE sessions
+           SET status = 'pending', conversation_id = NULL, started_at = NULL, completed_at = NULL
+           WHERE id = ?`,
+          [session.sessionId]
+        );
+        await runSql(
+          "DELETE FROM messages WHERE participant_id = ? AND session_number = ?",
+          [session.participantId, session.sessionNumber]
+        );
+        await runSql(
+          "DELETE FROM form_responses WHERE participant_id = ? AND session_number = ?",
+          [session.participantId, session.sessionNumber]
+        );
+        await runSql(
+          "DELETE FROM reading_task_responses WHERE participant_id = ? AND session_number = ?",
+          [session.participantId, session.sessionNumber]
+        );
+        await runSql("DELETE FROM session_personas WHERE session_id = ?", [session.sessionId]);
+
+        const participantSessions = await allSql(
+          `SELECT status,
+                  started_at AS startedAt,
+                  completed_at AS completedAt
+           FROM sessions
+           WHERE participant_id = ?`,
+          [session.participantId]
+        );
+
+        const hasStartedAny = participantSessions.some((row) => Boolean(row.startedAt));
+        const allCompleted = participantSessions.length > 0
+          && participantSessions.every((row) => row.status === "completed" || Boolean(row.completedAt));
+        const participantStatus = allCompleted ? "completed" : hasStartedAny ? "in_progress" : "invited";
+
+        await runSql("UPDATE participants SET status = ? WHERE id = ?", [participantStatus, session.participantId]);
+        await runSql("COMMIT");
+
+        resolve({
+          sessionId: session.sessionId,
+          sessionNumber: session.sessionNumber,
+          participantCode: session.participantCode,
+          participantId: session.participantId,
+          participantStatus
+        });
+      } catch (error) {
+        try {
+          await runSql("ROLLBACK");
+        } catch (_rollbackError) {
+        }
+        reject(error);
+      }
+    });
+  });
+}
+
 export function resetDatabaseForDev() {
   const db = getDb();
   db.serialize(() => {
     db.run("DELETE FROM messages");
     db.run("DELETE FROM form_responses");
+    db.run("DELETE FROM reading_task_responses");
     db.run("DELETE FROM sessions");
     db.run("DELETE FROM participants");
   });

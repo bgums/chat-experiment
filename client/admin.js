@@ -1,6 +1,7 @@
 const inviteForm = document.getElementById("invite-form");
 const inviteResult = document.getElementById("invite-result");
-const sessionSelect = document.getElementById("session-select");
+const groupSelect = document.getElementById("group-select");
+const readingOrderSelect = document.getElementById("reading-order-select");
 const participantsTable = document.getElementById("participants-table");
 const participantsColumnToggles = document.getElementById("participants-column-toggles");
 const messagesModal = document.getElementById("messages-modal");
@@ -14,6 +15,9 @@ const refreshFormsBtn = document.getElementById("refresh-forms");
 const downloadAllFormsBtn = document.getElementById("download-all-forms");
 const downloadFilteredFormsBtn = document.getElementById("download-filtered-forms");
 const formsSummary = document.getElementById("forms-summary");
+const resetSessionForm = document.getElementById("reset-session-form");
+const resetSessionTokenInput = document.getElementById("reset-session-token");
+const resetSessionResult = document.getElementById("reset-session-result");
 
 const messageColumnDefs = [
   { key: "createdAt", label: "תאריך/שעה", defaultVisible: true },
@@ -25,6 +29,8 @@ const messageColumnDefs = [
 ];
 
 const participantColumnDefs = [
+  { key: "groupAssignment", label: "קבוצה", defaultVisible: true },
+  { key: "readingOrder", label: "סדר קריאה", defaultVisible: true },
   { key: "sessionNumber", label: "מפגש", defaultVisible: true },
   { key: "sessionStatus", label: "סטטוס מפגש", defaultVisible: true },
   { key: "sessionStartAt", label: "תחילת מפגש", defaultVisible: true },
@@ -156,6 +162,10 @@ function renderParticipantsTable(data) {
         .map((session, idx) => {
           const statusObj = computeSessionStatus(session);
           const sessionValues = {
+            groupAssignment: p.groupAssignment === "control" ? "Control" : "Experimental",
+            readingOrder: p.readingOrder === "confrontation_first"
+              ? "Confrontation → Withdrawal"
+              : "Withdrawal → Confrontation",
             sessionNumber: session.sessionNumber ? `מפגש ${session.sessionNumber}` : "",
             sessionStatus: renderStatusPill(statusObj),
             sessionStartAt: formatDateTime(session.startedAt),
@@ -419,11 +429,14 @@ inviteForm?.addEventListener("submit", async (event) => {
   inviteResult.textContent = "יוצר הזמנה...";
 
   try {
-    const sessionNumber = sessionSelect?.value ? Number(sessionSelect.value) : null;
+    const groupAssignment = groupSelect?.value === "control" ? "control" : "experimental";
+    const readingOrder = readingOrderSelect?.value === "confrontation_first"
+      ? "confrontation_first"
+      : "withdrawal_first";
     const response = await fetch("/api/admin/invite", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sessionNumber })
+      body: JSON.stringify({ groupAssignment, readingOrder })
     });
 
     if (!response.ok) {
@@ -438,27 +451,87 @@ inviteForm?.addEventListener("submit", async (event) => {
         ` <div class="muted">סיומת קישור לשיתוף: ${session.path}</div></div>`
       ))
       .join("");
-    inviteResult.innerHTML = `<strong>קוד משתתף:</strong> ${data.participantCode}<br />${links}`;
+    const groupLabel = data.groupAssignment === "control" ? "Control" : "Experimental";
+    const orderLabel = data.readingOrder === "confrontation_first"
+      ? "Confrontation → Withdrawal"
+      : "Withdrawal → Confrontation";
+    inviteResult.innerHTML = `<strong>קוד משתתף:</strong> ${data.participantCode}<br />` +
+      `<div><strong>קבוצה:</strong> ${groupLabel}</div>` +
+      `<div><strong>סדר קריאה:</strong> ${orderLabel}</div>` +
+      `${links}`;
     loadParticipants();
   } catch (error) {
     inviteResult.textContent = "שגיאה ביצירת הזמנה";
   }
 });
 
+resetSessionForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const token = (resetSessionTokenInput?.value || "").trim();
+  if (!token) {
+    if (resetSessionResult) {
+      resetSessionResult.textContent = "יש להזין token לפני האיפוס.";
+    }
+    return;
+  }
+
+  if (resetSessionResult) {
+    resetSessionResult.textContent = "מאפס מפגש...";
+  }
+
+  try {
+    const response = await fetch("/api/admin/session/reset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token })
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload?.error || "שגיאה באיפוס המפגש.");
+    }
+
+    if (resetSessionResult) {
+      resetSessionResult.innerHTML = `המפגש אופס בהצלחה: משתתף ${escapeHtml(payload.participantCode || "")} · מפגש ${escapeHtml(payload.sessionNumber || "")}`;
+    }
+    if (resetSessionTokenInput) {
+      resetSessionTokenInput.value = "";
+    }
+    loadParticipants();
+  } catch (error) {
+    if (resetSessionResult) {
+      resetSessionResult.textContent = error?.message || "שגיאה באיפוס המפגש.";
+    }
+  }
+});
+
 async function loadSessionOptions() {
-  if (!sessionSelect) return;
+  if (!groupSelect || !readingOrderSelect) return;
   try {
     const response = await fetch("/api/admin/session-options");
     if (!response.ok) return;
     const data = await response.json();
-    const options = (data.sessions || []).map((s) =>
-      `<option value="${s.sessionNumber}">${s.label || `מפגש ${s.sessionNumber}`}</option>`
+    const groupOptions = (data.groups || []).map((group) =>
+      `<option value="${group.key}">${group.label}</option>`
     );
-    sessionSelect.innerHTML = options.join("");
+    const readingOrderOptions = (data.readingOrders || []).map((order) =>
+      `<option value="${order.key}">${order.label}</option>`
+    );
+    groupSelect.innerHTML = groupOptions.join("");
+    readingOrderSelect.innerHTML = readingOrderOptions.join("");
+    toggleReadingOrderVisibility();
   } catch (error) {
     console.warn("Failed to load session options", error);
   }
 }
+
+function toggleReadingOrderVisibility() {
+  if (!groupSelect || !readingOrderSelect) return;
+  const isControl = groupSelect.value === "control";
+  readingOrderSelect.disabled = !isControl;
+}
+
+groupSelect?.addEventListener("change", toggleReadingOrderVisibility);
 
 function initialize() {
   renderParticipantsColumnToggles();

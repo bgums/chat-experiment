@@ -368,6 +368,77 @@ body {
   cursor: pointer;
 }
 
+.likert-slider-container {
+  display: flex;
+  /* Reverse the visual order: labels on top, then slider */
+  flex-direction: column-reverse;
+  align-items: center; /* center children horizontally */
+  margin: 25px auto;
+  width: 150%;
+  max-width: 560px; /* constrain width so slider and labels are centered */
+  padding: 0;
+  box-sizing: border-box;
+}
+
+.likert-slider {
+  width: 120%;
+  margin: 10px 0 0 0;
+  cursor: pointer;
+  display: block;
+  /* Use a consistent height and remove default padding that offsets the thumb */
+  height: 20px;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+.likert-labels {
+  display: grid;
+  text-align: center;
+  /* Position labels directly above the slider */
+  margin-bottom: 4px;
+  width: 150%;
+  box-sizing: border-box;
+  /* Add slight side padding to the grid to match the slider's internal track padding */
+  padding: 0 8px;
+}
+
+/* Adjust grid columns dynamically if scale is not 1-5 */
+.likert-labels[data-scale="3"] { grid-template-columns: repeat(3, 1fr); }
+.likert-labels[data-scale="4"] { grid-template-columns: repeat(4, 1fr); }
+.likert-labels[data-scale="5"] { grid-template-columns: repeat(5, 1fr); }
+.likert-labels[data-scale="6"] { grid-template-columns: repeat(6, 1fr); }
+.likert-labels[data-scale="7"] { grid-template-columns: repeat(7, 1fr); }
+
+.likert-label-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  font-size: 0.85rem;
+  color: var(--muted);
+  transition: all 0.2s ease;
+  min-width: 0;
+}
+
+.likert-label-item.selected .likert-num {
+  font-weight: 800;
+  color: #000;
+  transform: scale(1.1);
+}
+
+.likert-num {
+  font-size: 1rem;
+  margin-bottom: 2px;
+  display: block;
+}
+
+.likert-text {
+  font-size: 0.75rem;
+  line-height: 1.1;
+  white-space: normal;
+  max-width: 65px;
+  font-weight: 400 !important;
+}
+
 .likert-scale {
   display: flex;
   gap: 10px;
@@ -380,6 +451,15 @@ body {
   border-radius: 10px;
   border: 1px solid var(--border);
   background: #fff;
+}
+
+.likert-wrap {
+  margin-top: 8px;
+  margin-bottom: 8px;
+}
+.likert-label {
+  flex: 1 1 auto;
+  text-align: center;
 }
 
 .chat-section {

@@ -21,14 +21,16 @@ import {
   listFormResponses,
   updateParticipantStatus,
   getSessionPersonas,
+  resetSessionByToken,
   saveSessionPersonaConversationId,
   markSessionPersonaFirstMessage,
   markSessionPersonaMidPromptSent,
   markSessionPersonaFeedbackSent,
   getSessionPersona,
   listMessagesBySessionPersona,
-  saveConversationId,
-  listSessionsByParticipant
+  listSessionsByParticipant,
+  saveReadingTaskResponse,
+  listReadingTaskResponses
 } from "./db.js";
 import { ensureSessionPersonas, buildPersonaPrompt } from "./utils/personaLoader.js";
 
@@ -58,6 +60,7 @@ const feedbackInstructions = fs.readFileSync(feedbackInstructionsPath, "utf-8");
 
 const CHAT_DURATION_MINUTES = 8;
 const CHAT_DURATION_MS = CHAT_DURATION_MINUTES * 60 * 1000;
+const CONSENT_LOCK_WINDOW_MS = 60 * 60 * 1000;
 const MID_PROMPT_MINUTES = 9;
 const MID_PROMPT_MS = MID_PROMPT_MINUTES * 60 * 1000;
 const FEEDBACK_MIN_PARTICIPANT_MESSAGES = 2;
@@ -66,26 +69,34 @@ const FEEDBACK_FALLBACK_TEXT = "feedback could not be provided as the chat did n
 const app = express();
 app.use(cors());
 app.use(express.json());
-app.use(express.static(path.join(__dirname, "..", "client")));
 
 const ADMIN_USER = process.env.ADMIN_USER || "admin";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "12345";
 
 function adminAuth(req, res, next) {
-  const header = req.headers.authorization || "";
-  const [scheme, encoded] = header.split(" ");
-  if (scheme !== "Basic" || !encoded) {
-    res.set("WWW-Authenticate", "Basic realm=admin");
-    return res.status(401).send("Authentication required");
-  }
-  const decoded = Buffer.from(encoded, "base64").toString("utf-8");
-  const [user, pass] = decoded.split(":");
-  if (user === ADMIN_USER && pass === ADMIN_PASSWORD) return next();
+  if (isAdminAuthorized(req)) return next();
   res.set("WWW-Authenticate", "Basic realm=admin");
   return res.status(401).send("Invalid credentials");
 }
 
+function isAdminAuthorized(req) {
+  const header = req.headers.authorization || "";
+  const [scheme, encoded] = header.split(" ");
+  if (scheme !== "Basic" || !encoded) {
+    return false;
+  }
+  const decoded = Buffer.from(encoded, "base64").toString("utf-8");
+  const [user, pass] = decoded.split(":");
+  return user === ADMIN_USER && pass === ADMIN_PASSWORD;
+}
+
+function challengeAdminAuth(res) {
+  res.set("WWW-Authenticate", "Basic realm=admin");
+  return res.status(401).json({ error: "Admin credentials are required for this session." });
+}
+
 const sessionFlowPath = path.join(__dirname, "config", "sessionFlow.json");
+const readingTaskPath = path.join(__dirname, "config", "readingTask.json");
 const formsDir = path.join(__dirname, "forms");
 const modulesDir = path.join(__dirname, "modules");
 
@@ -99,13 +110,49 @@ function loadSessionFlow() {
   }
 }
 
-function getSessionSteps(sessionNumber) {
-  const flow = loadSessionFlow();
-  const match = (flow.sessions || []).find((session) => Number(session.session) === Number(sessionNumber));
-  if (match && Array.isArray(match.steps)) {
-    return match.steps;
+function loadReadingTaskConfig() {
+  try {
+    const raw = fs.readFileSync(readingTaskPath, "utf-8");
+    return JSON.parse(raw);
+  } catch (error) {
+    console.error("Failed to load reading task config", error);
+    return { key: "book_chapter", halves: { withdrawal: { chunks: [] }, confrontation: { chunks: [] } } };
   }
-  return [{ type: "chat" }];
+}
+
+function getOrderedReadingHalf(readingOrder, halfOrder) {
+  const normalizedOrder = readingOrder === "confrontation_first" ? "confrontation_first" : "withdrawal_first";
+  const firstHalf = normalizedOrder === "withdrawal_first" ? "withdrawal" : "confrontation";
+  const secondHalf = firstHalf === "withdrawal" ? "confrontation" : "withdrawal";
+  return Number(halfOrder) === 2 ? secondHalf : firstHalf;
+}
+
+function getGroupSessions(flow, groupAssignment) {
+  const key = groupAssignment === "control" ? "control" : "experimental";
+  return flow?.groups?.[key]?.sessions || [];
+}
+
+function getSessionDefinition(groupAssignment, sessionNumber) {
+  const flow = loadSessionFlow();
+  const sessions = getGroupSessions(flow, groupAssignment);
+  const match = sessions.find((session) => Number(session.session) === Number(sessionNumber));
+  if (match) {
+    return match;
+  }
+  return { session: sessionNumber, label: `מפגש ${sessionNumber}`, steps: [{ type: "chat" }] };
+}
+
+function getSessionSteps(session) {
+  const definition = getSessionDefinition(session.groupAssignment, session.sessionNumber);
+  const rawSteps = Array.isArray(definition.steps) ? definition.steps : [{ type: "chat" }];
+  return rawSteps.map((step) => {
+    if (step.type !== "reading_task") return { ...step };
+    let resolvedHalf = step.half || null;
+    if (!resolvedHalf && step.halfSource === "reading_order") {
+      resolvedHalf = getOrderedReadingHalf(session.readingOrder, step.halfOrder);
+    }
+    return { ...step, resolvedHalf };
+  });
 }
 
 function combineChatPrompt(personaObj, includeMid = false) {
@@ -200,17 +247,56 @@ function buildFormResponsesCsv(rows) {
 
 async function maybeMarkSessionCompleted(session) {
   if (!session?.sessionId) return false;
-  const personas = await getSessionPersonas(session.sessionId);
-  if (!personas || !personas.length) return false;
+  const steps = getSessionSteps(session);
+  const hasChat = steps.some((step) => step.type === "chat");
+  const readingSteps = steps.filter((step) => step.type === "reading_task");
 
-  const now = Date.now();
-  const allChatsCompleted = personas.every((persona) => {
-    if (!persona.firstMessageAt) return false;
-    const elapsed = now - new Date(persona.firstMessageAt).getTime();
-    return elapsed >= CHAT_DURATION_MS;
-  });
+  if (hasChat) {
+    const personas = await getSessionPersonas(session.sessionId);
+    if (!personas || !personas.length) return false;
 
-  if (!allChatsCompleted) return false;
+    const now = Date.now();
+    const allChatsCompleted = personas.every((persona) => {
+      if (!persona.firstMessageAt) return false;
+      const elapsed = now - new Date(persona.firstMessageAt).getTime();
+      return elapsed >= CHAT_DURATION_MS;
+    });
+
+    if (!allChatsCompleted) return false;
+  } else if (readingSteps.length) {
+    const readingConfig = loadReadingTaskConfig();
+    for (const readingStep of readingSteps) {
+      const halfKey = readingStep.resolvedHalf;
+      const readingKey = readingStep.key || readingConfig.key;
+      if (!halfKey) return false;
+      const chunks = readingConfig?.halves?.[halfKey]?.chunks || [];
+      if (!chunks.length) {
+        continue;
+      }
+      const responses = await listReadingTaskResponses({
+        participantId: session.participantId,
+        sessionNumber: session.sessionNumber,
+        readingKey,
+        readingHalf: halfKey
+      });
+
+      const answeredSet = new Set(
+        responses.map((r) => `${Number(r.chunkIndex)}::${String(r.questionId || "")}`)
+      );
+
+      for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx += 1) {
+        const questions = chunks[chunkIdx]?.questions || [];
+        for (const question of questions) {
+          const qid = String(question.id || "");
+          if (!qid) continue;
+          const key = `${chunkIdx}::${qid}`;
+          if (!answeredSet.has(key)) {
+            return false;
+          }
+        }
+      }
+    }
+  }
 
   await markSessionCompleted(session.sessionId);
   const sessions = await listSessionsByParticipant(session.participantId);
@@ -218,6 +304,63 @@ async function maybeMarkSessionCompleted(session) {
   await updateParticipantStatus(session.participantId, allSessionsCompleted ? "completed" : "in_progress");
   return true;
 }
+
+async function getSessionLockState(session) {
+  if (!session) {
+    return { locked: false, reason: null, code: null };
+  }
+
+  if (session.sessionStatus === "completed" || session.completedAt) {
+    return { locked: true, reason: "Session flow is complete.", code: "session_completed" };
+  }
+
+  const forms = await listFormResponses({
+    participantId: session.participantId,
+    sessionNumber: session.sessionNumber
+  });
+  const consentResponse = forms.find((row) => row.formKey === "consent");
+  if (!consentResponse?.createdAt) {
+    return { locked: false, reason: null, code: null };
+  }
+
+  const elapsed = Date.now() - new Date(consentResponse.createdAt).getTime();
+  if (elapsed > CONSENT_LOCK_WINDOW_MS) {
+    return {
+      locked: true,
+      reason: "More than 1 hour passed since consent was completed.",
+      code: "consent_expired"
+    };
+  }
+
+  return { locked: false, reason: null, code: null };
+}
+
+async function enforceLockedSessionAdmin(req, res, next) {
+  try {
+    const sessionToken = req.params?.token || req.query?.token;
+    if (!sessionToken) return next();
+
+    const session = await getSessionByToken(sessionToken);
+    if (!session) return next();
+
+    await maybeMarkSessionCompleted(session);
+    const refreshed = await getSessionByToken(sessionToken);
+    const lockState = await getSessionLockState(refreshed || session);
+    if (!lockState.locked) return next();
+    if (isAdminAuthorized(req)) return next();
+
+    return challengeAdminAuth(res);
+  } catch (error) {
+    console.error("Failed to enforce locked-session auth", error);
+    return res.status(500).json({ error: "Could not validate session lock state." });
+  }
+}
+
+app.get("/", enforceLockedSessionAdmin, (_req, res, next) => {
+  next();
+});
+app.use("/api/session/:token", enforceLockedSessionAdmin);
+app.use(express.static(path.join(__dirname, "..", "client")));
 
 function loadFormDefinition(formKey) {
   const safeKey = `${formKey}`.replace(/[^a-zA-Z0-9_-]/g, "");
@@ -243,13 +386,11 @@ app.use("/api/admin", adminAuth);
 
 app.post("/api/admin/invite", async (req, res) => {
   try {
-    const flow = loadSessionFlow();
-    const requestedSession = Number(req.body?.sessionNumber) || 1;
-    const availableSessions = (flow.sessions || []).map((s) => Number(s.session)).filter((n) => Number.isFinite(n));
-    const sessionNumber = availableSessions.includes(requestedSession)
-      ? requestedSession
-      : (availableSessions[0] || 1);
-    const invite = await createInvite({ sessionNumber });
+    const groupAssignment = req.body?.groupAssignment === "control" ? "control" : "experimental";
+    const readingOrder = req.body?.readingOrder === "confrontation_first"
+      ? "confrontation_first"
+      : "withdrawal_first";
+    const invite = await createInvite({ groupAssignment, readingOrder });
 
     const origin = req.get("origin") || `${req.protocol}://${req.get("host")}`;
     const sessions = invite.sessionTokens.map(({ sessionNumber, token }) => ({
@@ -259,7 +400,12 @@ app.post("/api/admin/invite", async (req, res) => {
       path: `/?token=${token}`
     }));
 
-    res.json({ participantCode: invite.participantCode, sessions });
+    res.json({
+      participantCode: invite.participantCode,
+      groupAssignment,
+      readingOrder,
+      sessions
+    });
   } catch (error) {
     console.error("Failed to create invite", error);
     res.status(500).json({ error: error?.message || "Could not create invite." });
@@ -268,12 +414,16 @@ app.post("/api/admin/invite", async (req, res) => {
 
 app.get("/api/admin/session-options", (_req, res) => {
   try {
-    const flow = loadSessionFlow();
-    const options = (flow.sessions || []).map((session) => ({
-      sessionNumber: Number(session.session),
-      label: session.label || `מפגש ${session.session}`
-    }));
-    res.json({ sessions: options });
+    res.json({
+      groups: [
+        { key: "experimental", label: "Experimental" },
+        { key: "control", label: "Control" }
+      ],
+      readingOrders: [
+        { key: "withdrawal_first", label: "Withdrawal → Confrontation" },
+        { key: "confrontation_first", label: "Confrontation → Withdrawal" }
+      ]
+    });
   } catch (error) {
     console.error("Failed to load session options", error);
     res.status(500).json({ error: error?.message || "Could not load session options." });
@@ -287,6 +437,30 @@ app.get("/api/admin/participants", async (_req, res) => {
   } catch (error) {
     console.error("Failed to list participants", error);
     res.status(500).json({ error: error?.message || "Could not load participants." });
+  }
+});
+
+app.post("/api/admin/session/reset", async (req, res) => {
+  try {
+    const token = String(req.body?.token || "").trim();
+    if (!token) {
+      return res.status(400).json({ error: "Session token is required." });
+    }
+
+    const resetResult = await resetSessionByToken(token);
+    if (!resetResult) {
+      return res.status(404).json({ error: "Session not found for token." });
+    }
+
+    return res.json({
+      ok: true,
+      participantCode: resetResult.participantCode,
+      sessionNumber: resetResult.sessionNumber,
+      participantStatus: resetResult.participantStatus
+    });
+  } catch (error) {
+    console.error("Failed to reset session", error);
+    return res.status(500).json({ error: error?.message || "Could not reset session." });
   }
 });
 
@@ -357,18 +531,20 @@ app.get("/api/session/:token", async (req, res) => {
       return res.status(404).json({ error: "Session not found." });
     }
 
-    const flow = loadSessionFlow();
-    const match = (flow.sessions || []).find((s) => Number(s.session) === Number(session.sessionNumber));
-    const configuredSteps = getSessionSteps(session.sessionNumber);
+    const definition = getSessionDefinition(session.groupAssignment, session.sessionNumber);
+    const configuredSteps = getSessionSteps(session);
+    const hasChatSteps = configuredSteps.some((step) => step.type === "chat");
 
-    const personas = await ensureSessionPersonas({
-      sessionId: session.sessionId,
-      participantId: session.participantId,
-      sessionNumber: session.sessionNumber,
-      participantCode: session.participantCode
-    });
-
-    const persistedPersonas = await getSessionPersonas(session.sessionId);
+    let persistedPersonas = [];
+    if (hasChatSteps) {
+      await ensureSessionPersonas({
+        sessionId: session.sessionId,
+        participantId: session.participantId,
+        sessionNumber: session.sessionNumber,
+        participantCode: session.participantCode
+      });
+      persistedPersonas = await getSessionPersonas(session.sessionId);
+    }
 
     await markSessionStarted(session.sessionId);
     await maybeMarkSessionCompleted(session);
@@ -407,13 +583,21 @@ app.get("/api/session/:token", async (req, res) => {
       .filter((step) => step.type !== "chat" && step.position === "after_personas")
       .map((step) => ({ ...step }));
     const orderedPersonaSteps = personaSteps.sort((a, b) => (a.order || 0) - (b.order || 0));
-    const steps = [...nonChatSteps, ...orderedPersonaSteps, ...afterPersonaSteps];
+    const preChatInstructionStep = orderedPersonaSteps.length
+      ? [{
+        type: "participant_instruction",
+        key: "pre_chat_instruction",
+      }]
+      : [];
+    const steps = [...nonChatSteps, ...preChatInstructionStep, ...orderedPersonaSteps, ...afterPersonaSteps];
 
     res.json({
       participantCode: session.participantCode,
       sessionNumber: session.sessionNumber,
       status: session.sessionStatus,
-      sessionLabel: match?.label || null,
+      sessionLabel: definition?.label || null,
+      groupAssignment: session.groupAssignment,
+      readingOrder: session.readingOrder,
       steps,
       conversationId: null,
       totalSessions: session.totalSessions
@@ -432,7 +616,7 @@ app.post("/api/session/:token/forms/:formKey", async (req, res) => {
       return res.status(404).json({ error: "Session not found." });
     }
 
-    const steps = getSessionSteps(session.sessionNumber);
+    const steps = getSessionSteps(session);
     const requestedSessionPersonaId = req.body?.sessionPersonaId ? Number(req.body.sessionPersonaId) : null;
     const personaFormKeys = new Set(["post_chat", "post_feedback"]);
 
@@ -477,7 +661,7 @@ app.get("/api/session/:token/forms/:formKey", async (req, res) => {
       return res.status(404).json({ error: "Session not found." });
     }
 
-    const steps = getSessionSteps(session.sessionNumber);
+    const steps = getSessionSteps(session);
     const personaFormKeys = new Set(["post_chat", "post_feedback"]);
 
     let allowed = steps.some((step) => step.type === "form" && step.key === formKey);
@@ -640,54 +824,105 @@ app.post("/api/session/:token/message", async (req, res) => {
   }
 });
 
-// Legacy route kept for backward compatibility
-app.post("/api/message", async (req, res) => {
+app.get("/api/session/:token/reading/:readingHalf", async (req, res) => {
   try {
-    const { message, conversationId: incomingConversationId } = req.body || {};
-
-    if (!message || typeof message !== "string") {
-      return res.status(400).json({ error: "Message is required." });
+    const { token, readingHalf } = req.params;
+    const session = await getSessionByToken(token);
+    if (!session) {
+      return res.status(404).json({ error: "Session not found." });
     }
 
-    let conversationId = incomingConversationId;
-
-    if (!conversationId) {
-      const conversation = await createConversation();
-      conversationId = conversation.id;
+    const steps = getSessionSteps(session);
+    const readingStep = steps.find((step) => step.type === "reading_task" && step.resolvedHalf === readingHalf);
+    if (!readingStep) {
+      return res.status(400).json({ error: "Reading task not part of this session." });
     }
 
-    const responsePayload = {
-      model: MODEL_ID,
-      conversation: conversationId,
-      instructions: chatInstructions,
-      tools: [
-        {
-          type: "file_search",
-          vector_store_ids: [VECTOR_STORE_ID]
-        }
-      ],
-      input: [
-        {
-          role: "user",
-          content: [
-            { type: "input_text", text: message }
-          ]
-        }
-      ]
-    };
-
-    const response = await createResponse(responsePayload);
-
-    const assistantText = extractTextFromResponse(response);
+    const readingConfig = loadReadingTaskConfig();
+    const halfConfig = readingConfig?.halves?.[readingHalf];
+    if (!halfConfig) {
+      return res.status(404).json({ error: "Reading half not found." });
+    }
 
     return res.json({
-      conversationId,
-      response: assistantText
+      readingKey: readingStep.key || readingConfig.key,
+      readingHalf,
+      title: halfConfig.title || readingHalf,
+      chunks: halfConfig.chunks || []
     });
   } catch (error) {
-    console.error("OpenAI request failed", error);
-    const message = error?.response?.data?.error?.message || error?.message || "Unknown error";
-    return res.status(500).json({ error: message });
+    console.error("Failed to load reading task", error);
+    return res.status(500).json({ error: error?.message || "Could not load reading task." });
+  }
+});
+
+app.get("/api/session/:token/reading/:readingHalf/responses", async (req, res) => {
+  try {
+    const { token, readingHalf } = req.params;
+    const session = await getSessionByToken(token);
+    if (!session) {
+      return res.status(404).json({ error: "Session not found." });
+    }
+
+    const steps = getSessionSteps(session);
+    const readingStep = steps.find((step) => step.type === "reading_task" && step.resolvedHalf === readingHalf);
+    if (!readingStep) {
+      return res.status(400).json({ error: "Reading task not part of this session." });
+    }
+
+    const readingConfig = loadReadingTaskConfig();
+    const readingKey = readingStep.key || readingConfig.key;
+    const responses = await listReadingTaskResponses({
+      participantId: session.participantId,
+      sessionNumber: session.sessionNumber,
+      readingKey,
+      readingHalf
+    });
+    return res.json({ responses });
+  } catch (error) {
+    console.error("Failed to load reading responses", error);
+    return res.status(500).json({ error: error?.message || "Could not load reading responses." });
+  }
+});
+
+app.post("/api/session/:token/reading/:readingHalf/response", async (req, res) => {
+  try {
+    const { token, readingHalf } = req.params;
+    const { chunkIndex, questionId, questionPrompt, answer } = req.body || {};
+    if (!Number.isInteger(Number(chunkIndex)) || !questionId) {
+      return res.status(400).json({ error: "chunkIndex and questionId are required." });
+    }
+
+    const session = await getSessionByToken(token);
+    if (!session) {
+      return res.status(404).json({ error: "Session not found." });
+    }
+
+    const steps = getSessionSteps(session);
+    const readingStep = steps.find((step) => step.type === "reading_task" && step.resolvedHalf === readingHalf);
+    if (!readingStep) {
+      return res.status(400).json({ error: "Reading task not part of this session." });
+    }
+
+    await markSessionStarted(session.sessionId);
+    const readingConfig = loadReadingTaskConfig();
+    const readingKey = readingStep.key || readingConfig.key;
+    await saveReadingTaskResponse({
+      participantId: session.participantId,
+      sessionNumber: session.sessionNumber,
+      readingKey,
+      readingHalf,
+      chunkIndex: Number(chunkIndex),
+      questionId: String(questionId),
+      questionPrompt: questionPrompt || null,
+      answer
+    });
+
+    await maybeMarkSessionCompleted(session);
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error("Failed to save reading response", error);
+    return res.status(500).json({ error: error?.message || "Could not save reading response." });
   }
 });
 
