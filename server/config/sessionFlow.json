@@ -58,7 +58,16 @@
           "label": "מפגש שני",
           "steps": [
             { "type": "form", "key": "consent" },
-            { "type": "reading_task", "key": "book_chapter", "halfSource": "reading_order", "halfOrder": 1 }
+            { "type": "module", "key": "session2_introduction_module" },
+            {
+              "type": "module",
+              "keySource": "reading_order",
+              "moduleOrder": 1,
+              "moduleByHalf": {
+                "withdrawal": "withdrawal_module",
+                "confrontation": "confrontation_module"
+              }
+            }
           ]
         },
         {
@@ -66,7 +75,15 @@
           "label": "מפגש שלישי",
           "steps": [
             { "type": "form", "key": "consent" },
-            { "type": "reading_task", "key": "book_chapter", "halfSource": "reading_order", "halfOrder": 2 }
+            {
+              "type": "module",
+              "keySource": "reading_order",
+              "moduleOrder": 2,
+              "moduleByHalf": {
+                "withdrawal": "withdrawal_module",
+                "confrontation": "confrontation_module"
+              }
+            }
           ]
         },
         {

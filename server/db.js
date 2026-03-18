@@ -111,19 +111,24 @@ function createDatabase() {
     `);
 
     db.run(`
-      CREATE TABLE IF NOT EXISTS reading_task_responses (
+      CREATE TABLE IF NOT EXISTS module_question_responses (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         participant_id INTEGER NOT NULL,
+        session_id INTEGER NOT NULL,
         session_number INTEGER NOT NULL,
-        reading_key TEXT NOT NULL,
-        reading_half TEXT NOT NULL,
-        chunk_index INTEGER NOT NULL,
+        module_name TEXT NOT NULL,
+        section_id TEXT NOT NULL,
+        section_number INTEGER,
         question_id TEXT NOT NULL,
-        question_prompt TEXT,
-        answer_text TEXT,
-        answer_json TEXT,
-        answered_at TEXT DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY(participant_id) REFERENCES participants(id)
+        question_number INTEGER,
+        question_content TEXT,
+        answer TEXT,
+        correct_answer TEXT,
+        is_correct INTEGER,
+        timedate TEXT DEFAULT CURRENT_TIMESTAMP,
+        time_since_start REAL,
+        FOREIGN KEY(participant_id) REFERENCES participants(id),
+        FOREIGN KEY(session_id) REFERENCES sessions(id)
       )
     `);
   });
@@ -640,107 +645,120 @@ export function updateParticipantStatus(participantId, status) {
   });
 }
 
-export function saveReadingTaskResponse({
+export function saveModuleQuestionResponse({
   participantId,
+  sessionId,
   sessionNumber,
-  readingKey,
-  readingHalf,
-  chunkIndex,
+  moduleName,
+  sectionId,
+  sectionNumber,
   questionId,
-  questionPrompt,
-  answer
+  questionNumber,
+  questionContent,
+  answer,
+  correctAnswer,
+  isCorrect,
+  timedate,
+  timeSinceStart
 }) {
   const db = getDb();
-  const answerText = answer == null ? "" : String(answer);
-  const answerJson = JSON.stringify({ value: answer });
+  const normalizedAnswer = answer == null ? "" : String(answer);
+  const normalizedCorrect = correctAnswer == null ? null : String(correctAnswer);
+  const normalizedCorrectness = isCorrect === null || isCorrect === undefined ? null : (isCorrect ? 1 : 0);
 
   return new Promise((resolve, reject) => {
-    db.serialize(() => {
-      db.run(
-        `DELETE FROM reading_task_responses
-         WHERE participant_id = ?
-           AND session_number = ?
-           AND reading_key = ?
-           AND reading_half = ?
-           AND chunk_index = ?
-           AND question_id = ?`,
-        [participantId, sessionNumber, readingKey, readingHalf, chunkIndex, questionId],
-        (deleteErr) => {
-          if (deleteErr) return reject(deleteErr);
-
-          db.run(
-            `INSERT INTO reading_task_responses
-            (participant_id, session_number, reading_key, reading_half, chunk_index, question_id, question_prompt, answer_text, answer_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-              participantId,
-              sessionNumber,
-              readingKey,
-              readingHalf,
-              chunkIndex,
-              questionId,
-              questionPrompt || null,
-              answerText,
-              answerJson
-            ],
-            function onInsert(err) {
-              if (err) return reject(err);
-              resolve(this.lastID);
-            }
-          );
+    db.get(
+      `SELECT id
+       FROM module_question_responses
+       WHERE participant_id = ?
+         AND session_number = ?
+         AND module_name = ?
+         AND section_id = ?
+         AND question_id = ?
+       LIMIT 1`,
+      [participantId, sessionNumber, moduleName, sectionId, questionId],
+      (selectErr, row) => {
+        if (selectErr) return reject(selectErr);
+        if (row?.id) {
+          return resolve({ inserted: false, existingId: row.id });
         }
-      );
-    });
+
+        db.run(
+          `INSERT INTO module_question_responses
+          (participant_id, session_id, session_number, module_name, section_id, section_number, question_id, question_number, question_content, answer, correct_answer, is_correct, timedate, time_since_start)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            participantId,
+            sessionId,
+            sessionNumber,
+            moduleName,
+            sectionId,
+            sectionNumber ?? null,
+            questionId,
+            questionNumber ?? null,
+            questionContent || null,
+            normalizedAnswer,
+            normalizedCorrect,
+            normalizedCorrectness,
+            timedate || new Date().toISOString(),
+            timeSinceStart == null ? null : Number(timeSinceStart)
+          ],
+          function onInsert(err) {
+            if (err) return reject(err);
+            resolve({ inserted: true, id: this.lastID });
+          }
+        );
+      }
+    );
   });
 }
 
-export function listReadingTaskResponses({ participantId, sessionNumber, readingKey, readingHalf }) {
+export function listModuleQuestionResponses({ participantId, sessionNumber, moduleName }) {
   const db = getDb();
   const query = `
     SELECT id,
            participant_id AS participantId,
+           session_id AS sessionId,
            session_number AS sessionNumber,
-           reading_key AS readingKey,
-           reading_half AS readingHalf,
-           chunk_index AS chunkIndex,
+           module_name AS moduleName,
+           section_id AS sectionId,
+           section_number AS sectionNumber,
            question_id AS questionId,
-           question_prompt AS questionPrompt,
-           answer_text AS answerText,
-           answer_json AS answerJson,
-           answered_at AS answeredAt
-    FROM reading_task_responses
+           question_number AS questionNumber,
+           question_content AS questionContent,
+           answer,
+           correct_answer AS correctAnswer,
+           is_correct AS isCorrect,
+           timedate,
+           time_since_start AS timeSinceStart
+    FROM module_question_responses
     WHERE participant_id = ?
       AND session_number = ?
-      AND reading_key = ?
-      AND reading_half = ?
-    ORDER BY chunk_index ASC, id ASC
+      AND module_name = ?
+    ORDER BY section_number ASC, question_number ASC, id ASC
   `;
 
   return new Promise((resolve, reject) => {
-    db.all(query, [participantId, sessionNumber, readingKey, readingHalf], (err, rows) => {
+    db.all(query, [participantId, sessionNumber, moduleName], (err, rows) => {
       if (err) return reject(err);
       resolve(
-        (rows || []).map((row) => {
-          let parsed = null;
-          try {
-            parsed = JSON.parse(row.answerJson || "null");
-          } catch (e) {
-            parsed = null;
-          }
-          return {
-            id: row.id,
-            participantId: row.participantId,
-            sessionNumber: row.sessionNumber,
-            readingKey: row.readingKey,
-            readingHalf: row.readingHalf,
-            chunkIndex: row.chunkIndex,
-            questionId: row.questionId,
-            questionPrompt: row.questionPrompt,
-            answerText: row.answerText,
-            answer: parsed?.value ?? row.answerText,
-            answeredAt: row.answeredAt
-          };
-        })
+        (rows || []).map((row) => ({
+          id: row.id,
+          participantId: row.participantId,
+          sessionId: row.sessionId,
+          sessionNumber: row.sessionNumber,
+          moduleName: row.moduleName,
+          sectionId: row.sectionId,
+          sectionNumber: row.sectionNumber,
+          questionId: row.questionId,
+          questionNumber: row.questionNumber,
+          questionContent: row.questionContent,
+          answer: row.answer,
+          correctAnswer: row.correctAnswer,
+          isCorrect: row.isCorrect,
+          timedate: row.timedate,
+          timeSinceStart: row.timeSinceStart
+        }))
       );
     });
   });
@@ -806,7 +824,7 @@ export function resetSessionByToken(sessionToken) {
           [session.participantId, session.sessionNumber]
         );
         await runSql(
-          "DELETE FROM reading_task_responses WHERE participant_id = ? AND session_number = ?",
+          "DELETE FROM module_question_responses WHERE participant_id = ? AND session_number = ?",
           [session.participantId, session.sessionNumber]
         );
         await runSql("DELETE FROM session_personas WHERE session_id = ?", [session.sessionId]);
@@ -851,7 +869,7 @@ export function resetDatabaseForDev() {
   db.serialize(() => {
     db.run("DELETE FROM messages");
     db.run("DELETE FROM form_responses");
-    db.run("DELETE FROM reading_task_responses");
+    db.run("DELETE FROM module_question_responses");
     db.run("DELETE FROM sessions");
     db.run("DELETE FROM participants");
   });

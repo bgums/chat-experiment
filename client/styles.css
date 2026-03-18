@@ -51,6 +51,29 @@
   opacity: 0.8;
 }
 
+.module-option-btn.module-option-correct {
+  border-color: rgba(46, 125, 50, 0.5);
+  background: rgba(46, 125, 50, 0.14);
+}
+
+.module-option-btn.module-option-wrong {
+  border-color: rgba(198, 40, 40, 0.45);
+  background: rgba(198, 40, 40, 0.12);
+}
+
+.module-option-btn.module-option-selected {
+  border-color: rgba(61, 90, 241, 0.45);
+  background: rgba(61, 90, 241, 0.12);
+}
+
+.module-content-paragraph p {
+  margin: 0 0 8px;
+}
+
+.module-question-block {
+  margin-top: 10px;
+}
+
 .module-feedback {
   margin-top: 8px;
   font-weight: 600;

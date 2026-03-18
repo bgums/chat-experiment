@@ -45,11 +45,33 @@ const createMessageElement = (role, markdown) => {
   wrapper.classList.add("message");
   wrapper.classList.add(role === "user" ? "message-user" : "message-assistant");
 
-  const htmlContent = window.marked.parse(markdown, { mangle: false, headerIds: false, breaks: true });
+  const htmlContent = safeParseMarkdown(markdown, { mangle: false, headerIds: false, breaks: true });
   wrapper.innerHTML = htmlContent;
 
   return wrapper;
 };
+
+function escapeHtml(s) {
+  return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+function safeParseMarkdown(markdown, opts) {
+  // Prefer using marked when available (support both marked.parse and marked())
+  try {
+    if (window.marked) {
+      if (typeof window.marked.parse === "function") return window.marked.parse(markdown || "", opts || {});
+      if (typeof window.marked === "function") return window.marked(markdown || "");
+    }
+  } catch (e) {
+    // fall through to simple fallback
+    console.warn("marked failed, using fallback markdown parser", e);
+  }
+
+  // Minimal, safe fallback: escape HTML then convert **bold** and line breaks
+  const escaped = escapeHtml(markdown || "");
+  const bolded = escaped.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  return bolded.replace(/\r?\n/g, "<br>");
+}
 
 const appendMessage = (role, markdown) => {
   if (!chatWindow) return;
@@ -136,8 +158,9 @@ const isChatFinished = (step) => {
 const updateStepNavigationVisibility = (step) => {
   if (!stepBackBtn || !stepForwardBtn) return;
   const isChatStep = step?.type === "chat";
+  const isModuleStep = step?.type === "module";
   const shouldHideForChat = isChatStep && !isChatFinished(step);
-  if (shouldHideForChat) {
+  if (shouldHideForChat || isModuleStep) {
     stepBackBtn.style.display = "none";
     stepForwardBtn.style.display = "none";
     return;
@@ -938,13 +961,7 @@ async function renderCurrentStep() {
   }
 
   if (step.type === "module") {
-    const response = await fetch(`/api/modules/${step.key}`);
-    if (!response.ok) {
-      renderPlaceholder("לא נמצא מודול עבור שלב זה.");
-      return;
-    }
-    const moduleDef = await response.json();
-    renderModule(moduleDef);
+    await renderModule(step);
     return;
   }
 
@@ -953,15 +970,10 @@ async function renderCurrentStep() {
     return;
   }
 
-  if (step.type === "reading_task") {
-    await renderReadingTask(step);
-    return;
-  }
-
   renderPlaceholder("סוג שלב לא מוכר בקובץ התצורה.");
 }
 
-async function renderReadingTask(step) {
+async function renderModule(step) {
   stopChatTimer();
   if (midPrimeTimeout) {
     clearTimeout(midPrimeTimeout);
@@ -969,183 +981,456 @@ async function renderReadingTask(step) {
   }
   setChatLockState(false);
 
-  const half = step.resolvedHalf;
-  if (!half) {
-    renderPlaceholder("שגיאה: לא הוגדר חצי קריאה למפגש זה.");
+  if (!step?.key) {
+    renderPlaceholder("לא הוגדר מפתח מודול לשלב זה.");
     return;
   }
 
-  const [contentResp, responsesResp] = await Promise.all([
-    fetch(`/api/session/${state.token}/reading/${half}`),
-    fetch(`/api/session/${state.token}/reading/${half}/responses`)
-  ]);
+  // Detect consecutive module steps and, when multiple module steps appear
+  // in sequence (e.g., an intro module followed by another module), load
+  // and merge them so the participant sees a unified sequence of sections.
+  const moduleSteps = [];
+  for (let i = state.currentStepIndex; i < state.steps.length; i += 1) {
+    const s = state.steps[i];
+    if (s?.type === "module") moduleSteps.push(s);
+    else break;
+  }
 
-  if (!contentResp.ok) {
-    renderPlaceholder("לא ניתן לטעון את משימת הקריאה.");
+  if (moduleSteps.length <= 1) {
+    const moduleResp = await fetch(`/api/modules/${step.key}`);
+    if (!moduleResp.ok) {
+      renderPlaceholder("לא נמצא מודול עבור שלב זה.");
+      return;
+    }
+    const moduleDef = await moduleResp.json();
+
+    if (Array.isArray(moduleDef?.sections)) {
+      await renderSectionModule(step, moduleDef);
+      return;
+    }
+
+    moduleState = {
+      def: moduleDef,
+      chapterIndex: 0,
+      pageIndex: 0,
+      answered: false
+    };
+    drawLegacyModulePage();
     return;
   }
 
-  const content = await contentResp.json();
-  const responsesPayload = responsesResp.ok ? await responsesResp.json() : { responses: [] };
-  const chunks = Array.isArray(content.chunks) ? content.chunks : [];
-  const existingResponses = responsesPayload.responses || [];
-
-  if (!chunks.length) {
-    stepContainer.innerHTML = `
-      <div class="step-card">
-        <h3>${content.title || "קריאה"}</h3>
-        <p class="muted">תוכן הקריאה טרם הוזן. ניתן להמשיך לשלב הבא.</p>
-      </div>
-    `;
-    return;
-  }
-
-  const responseMap = new Map(
-    existingResponses.map((row) => [`${Number(row.chunkIndex)}::${String(row.questionId || "")}`, row.answer ?? row.answerText ?? ""])
+  // Multiple module steps: fetch all module defs and merge sections
+  const moduleKeys = moduleSteps.map((ms) => ms.key);
+  const defs = await Promise.all(
+    moduleKeys.map((k) => fetch(`/api/modules/${k}`).then((r) => (r.ok ? r.json() : null)))
   );
 
-  let activeChunkIndex = 0;
-  for (let idx = 0; idx < chunks.length; idx += 1) {
-    const questions = chunks[idx]?.questions || [];
-    const hasAllAnswers = questions.every((q) => responseMap.has(`${idx}::${String(q.id || "")}`));
-    if (!hasAllAnswers) {
-      activeChunkIndex = idx;
-      break;
-    }
-    activeChunkIndex = Math.min(idx + 1, chunks.length - 1);
+  if (defs.some((d) => !d)) {
+    renderPlaceholder("לא ניתן לטעון את אחד ממודולי הסשן.");
+    return;
   }
 
-  const drawChunk = () => {
-    const chunk = chunks[activeChunkIndex] || { paragraphs: [], questions: [] };
+  // Build combined sections and keep metadata which module key each section came from
+  const combinedSections = [];
+  defs.forEach((def, defIdx) => {
+    const key = moduleKeys[defIdx];
+    const secs = Array.isArray(def.sections) ? def.sections : [];
+    secs.forEach((sec) => {
+      // attach internal metadata (non-serializable) to track origin module
+      const secClone = Object.assign({}, sec);
+      secClone.__moduleKey = key;
+      combinedSections.push(secClone);
+    });
+  });
+
+  await renderCombinedSectionModule(step, combinedSections, moduleKeys.length);
+}
+
+async function renderCombinedSectionModule(step, sections, moduleStepCount) {
+  // Aggregate responses for all involved modules
+  const moduleKeys = Array.from(new Set(sections.map((s) => s.__moduleKey)));
+  const responsesList = await Promise.all(
+    moduleKeys.map((k) => fetch(`/api/session/${state.token}/modules/${k}/responses`).then((r) => (r.ok ? r.json() : { responses: [] })))
+  );
+  const responses = responsesList.flatMap((p) => p.responses || []);
+  const responseMap = new Map(responses.map((row) => [`${String(row.sectionId)}::${String(row.questionId)}`, row]));
+
+  const sectionsSorted = [...sections];
+
+  let activeSectionIndex = 0;
+  const firstUnansweredIdx = sectionsSorted.findIndex((section) => {
+    const questions = section.questions || [];
+    return questions.some((question) => !responseMap.has(`${section.section_id}::${question.question_id}`));
+  });
+  if (firstUnansweredIdx >= 0) activeSectionIndex = firstUnansweredIdx;
+
+  const drawSection = () => {
+    const section = sectionsSorted[activeSectionIndex];
+    const questions = section.questions || [];
     const card = document.createElement("div");
     card.className = "step-card module-card";
 
     const title = document.createElement("h3");
-    title.textContent = content.title || "משימת קריאה";
+    title.textContent = step?.moduleTitle || section.title || "מודול";
     card.appendChild(title);
 
-    const progress = document.createElement("p");
-    progress.className = "muted";
-    progress.textContent = `קטע ${activeChunkIndex + 1} מתוך ${chunks.length}`;
-    card.appendChild(progress);
+    const subtitle = document.createElement("p");
+    subtitle.className = "muted";
+    subtitle.textContent = `חלק ${activeSectionIndex + 1} מתוך ${sectionsSorted.length}`;
+    card.appendChild(subtitle);
 
-    (chunk.paragraphs || []).forEach((paragraph) => {
-      const paraEl = document.createElement("p");
-      paraEl.textContent = paragraph;
+    const sectionTitle = document.createElement("h4");
+    sectionTitle.textContent = section.title || `Section ${activeSectionIndex + 1}`;
+    card.appendChild(sectionTitle);
+
+    (section.content || []).forEach((paragraph) => {
+      const paraEl = document.createElement("div");
+      paraEl.className = "module-content-paragraph";
+      paraEl.innerHTML = safeParseMarkdown(String(paragraph || ""), { mangle: false, headerIds: false, breaks: true });
       card.appendChild(paraEl);
     });
 
-    const formEl = document.createElement("form");
-    formEl.className = "question-list";
-    const questions = chunk.questions || [];
-    questions.forEach((question, qIdx) => {
-      const qid = String(question.id || `q${qIdx + 1}`);
-      const block = document.createElement("div");
-      block.className = "question";
-      const label = document.createElement("label");
-      label.textContent = question.prompt || qid;
-      block.appendChild(label);
+    questions.forEach((question, idx) => {
+      const questionNumber = idx + 1;
+      const responseKey = `${section.section_id}::${question.question_id}`;
+      const existing = responseMap.get(responseKey);
+      const answerLocked = Boolean(existing);
+      const selectedAnswer = existing?.answer;
+      const correctIndex = Number.isInteger(question.correct_answer_index) ? Number(question.correct_answer_index) : null;
+      const correctAnswer = correctIndex != null ? question.options?.[correctIndex] : null;
 
-      const input = document.createElement("textarea");
-      input.rows = 3;
-      input.name = qid;
-      input.required = true;
-      input.value = String(responseMap.get(`${activeChunkIndex}::${qid}`) || "");
-      block.appendChild(input);
+      const questionBlock = document.createElement("div");
+      questionBlock.className = "question module-question-block";
 
-      formEl.appendChild(block);
+      const prompt = document.createElement("p");
+      prompt.className = "module-question";
+      prompt.textContent = `${questionNumber}. ${question.prompt || question.question_id}`;
+      questionBlock.appendChild(prompt);
+
+      const optionsWrap = document.createElement("div");
+      optionsWrap.className = "module-options";
+      const statusText = document.createElement("p");
+      statusText.className = "muted module-feedback";
+      (question.options || []).forEach((option) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "ghost-button module-option-btn";
+        button.textContent = option;
+
+        if (answerLocked) {
+          button.disabled = true;
+          const isSelected = selectedAnswer === option;
+          const isCorrectOption = correctAnswer != null && correctAnswer === option;
+          if (isCorrectOption) {
+            button.classList.add("module-option-correct");
+          }
+          if (isSelected && !isCorrectOption) {
+            button.classList.add("module-option-wrong");
+          }
+          if (isSelected && correctAnswer == null) {
+            button.classList.add("module-option-selected");
+          }
+        } else {
+          button.addEventListener("click", async () => {
+            const optionButtons = Array.from(optionsWrap.querySelectorAll(".module-option-btn"));
+            optionButtons.forEach((candidate) => {
+              candidate.disabled = true;
+              candidate.classList.remove("module-option-selected");
+            });
+            button.classList.add("module-option-selected");
+            statusText.textContent = "";
+            try {
+              const payload = {
+                sectionId: section.section_id,
+                sectionNumber: Number(section.order_number || activeSectionIndex + 1),
+                questionId: question.question_id,
+                questionNumber,
+                questionContent: question.prompt || question.question_id,
+                answer: option,
+                correctAnswer
+              };
+              const saveResp = await fetch(`/api/session/${state.token}/modules/${section.__moduleKey}/answer`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+              });
+
+              if (!saveResp.ok) {
+                const err = await saveResp.json().catch(() => ({}));
+                throw new Error(err?.error || "Could not save answer");
+              }
+
+              const saveData = await saveResp.json();
+              responseMap.set(responseKey, {
+                sectionId: section.section_id,
+                questionId: question.question_id,
+                answer: option,
+                correctAnswer,
+                isCorrect: saveData?.isCorrect
+              });
+              drawSection();
+            } catch (error) {
+              console.error(error);
+              statusText.textContent = "לא ניתן לשמור את התשובה כרגע. נסו שוב.";
+              optionButtons.forEach((candidate) => {
+                candidate.disabled = false;
+              });
+            }
+          });
+        }
+        optionsWrap.appendChild(button);
+      });
+      questionBlock.appendChild(optionsWrap);
+      questionBlock.appendChild(statusText);
+      card.appendChild(questionBlock);
     });
 
     const footer = document.createElement("div");
     footer.className = "module-footer";
-
     const prevBtn = document.createElement("button");
     prevBtn.type = "button";
     prevBtn.className = "ghost-button";
     prevBtn.textContent = "הקודם";
-    prevBtn.disabled = activeChunkIndex === 0;
+    prevBtn.disabled = activeSectionIndex === 0;
     prevBtn.addEventListener("click", () => {
-      if (activeChunkIndex > 0) {
-        activeChunkIndex -= 1;
-        drawChunk();
+      if (activeSectionIndex > 0) {
+        activeSectionIndex -= 1;
+        drawSection();
       }
     });
 
     const nextBtn = document.createElement("button");
-    nextBtn.type = "submit";
+    nextBtn.type = "button";
     nextBtn.className = "ghost-button";
-    nextBtn.textContent = activeChunkIndex === chunks.length - 1 ? "סיום הקריאה" : "המשך";
+    const isLast = activeSectionIndex === sectionsSorted.length - 1;
+    nextBtn.textContent = isLast ? "סיום המודול" : "הבא";
+
+    const hasPendingQuestions = questions.some(
+      (question) => !responseMap.has(`${section.section_id}::${question.question_id}`)
+    );
+    nextBtn.disabled = hasPendingQuestions;
+
+    nextBtn.addEventListener("click", async () => {
+      if (hasPendingQuestions) return;
+      if (!isLast) {
+        activeSectionIndex += 1;
+        drawSection();
+      } else {
+        // Advance by the number of module steps we merged
+        state.currentStepIndex += moduleStepCount;
+        await renderCurrentStep();
+      }
+    });
 
     footer.appendChild(prevBtn);
     footer.appendChild(nextBtn);
-    formEl.appendChild(footer);
+    card.appendChild(footer);
 
-    formEl.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      for (const question of questions) {
-        const qid = String(question.id || "");
-        const field = formEl.elements.namedItem(qid);
-        const answer = typeof field?.value === "string" ? field.value.trim() : "";
-        if (!answer) {
-          return;
-        }
-      }
+    stepContainer.innerHTML = "";
+    stepContainer.appendChild(card);
+  };
 
-      nextBtn.disabled = true;
-      try {
-        for (const question of questions) {
-          const qid = String(question.id || "");
-          const field = formEl.elements.namedItem(qid);
-          const answer = typeof field?.value === "string" ? field.value.trim() : "";
-          await fetch(`/api/session/${state.token}/reading/${half}/response`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              chunkIndex: activeChunkIndex,
-              questionId: qid,
-              questionPrompt: question.prompt || qid,
-              answer
-            })
+  drawSection();
+}
+
+async function renderSectionModule(step, moduleDef) {
+  const responsesResp = await fetch(`/api/session/${state.token}/modules/${step.key}/responses`);
+  const responsesPayload = responsesResp.ok ? await responsesResp.json() : { responses: [] };
+  const responses = responsesPayload.responses || [];
+
+  const responseMap = new Map(
+    responses.map((row) => [`${String(row.sectionId)}::${String(row.questionId)}`, row])
+  );
+
+  const sections = [...(moduleDef.sections || [])].sort(
+    (a, b) => Number(a.order_number || 0) - Number(b.order_number || 0)
+  );
+
+  if (!sections.length) {
+    renderPlaceholder("המודול ריק.");
+    return;
+  }
+
+  let activeSectionIndex = 0;
+  const firstUnansweredIdx = sections.findIndex((section) => {
+    const questions = section.questions || [];
+    return questions.some((question) => !responseMap.has(`${section.section_id}::${question.question_id}`));
+  });
+  if (firstUnansweredIdx >= 0) activeSectionIndex = firstUnansweredIdx;
+
+  const drawSection = () => {
+    const section = sections[activeSectionIndex];
+    const questions = section.questions || [];
+    const card = document.createElement("div");
+    card.className = "step-card module-card";
+
+    const title = document.createElement("h3");
+    title.textContent = moduleDef.module_title || moduleDef.title || "מודול";
+    card.appendChild(title);
+
+    const subtitle = document.createElement("p");
+    subtitle.className = "muted";
+    subtitle.textContent = `חלק ${activeSectionIndex + 1} מתוך ${sections.length}`;
+    card.appendChild(subtitle);
+
+    const sectionTitle = document.createElement("h4");
+    sectionTitle.textContent = section.title || `Section ${activeSectionIndex + 1}`;
+    card.appendChild(sectionTitle);
+
+    (section.content || []).forEach((paragraph) => {
+      const paraEl = document.createElement("div");
+      paraEl.className = "module-content-paragraph";
+      paraEl.innerHTML = window.marked.parse(String(paragraph || ""), { mangle: false, headerIds: false, breaks: true });
+      card.appendChild(paraEl);
+    });
+
+    questions.forEach((question, idx) => {
+      const questionNumber = idx + 1;
+      const responseKey = `${section.section_id}::${question.question_id}`;
+      const existing = responseMap.get(responseKey);
+      const answerLocked = Boolean(existing);
+      const selectedAnswer = existing?.answer;
+      const correctIndex = Number.isInteger(question.correct_answer_index) ? Number(question.correct_answer_index) : null;
+      const correctAnswer = correctIndex != null ? question.options?.[correctIndex] : null;
+
+      const questionBlock = document.createElement("div");
+      questionBlock.className = "question module-question-block";
+
+      const prompt = document.createElement("p");
+      prompt.className = "module-question";
+      prompt.textContent = `${questionNumber}. ${question.prompt || question.question_id}`;
+      questionBlock.appendChild(prompt);
+
+      const optionsWrap = document.createElement("div");
+      optionsWrap.className = "module-options";
+      const statusText = document.createElement("p");
+      statusText.className = "muted module-feedback";
+      (question.options || []).forEach((option) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "ghost-button module-option-btn";
+        button.textContent = option;
+
+        if (answerLocked) {
+          button.disabled = true;
+          const isSelected = selectedAnswer === option;
+          const isCorrectOption = correctAnswer != null && correctAnswer === option;
+          if (isCorrectOption) {
+            button.classList.add("module-option-correct");
+          }
+          if (isSelected && !isCorrectOption) {
+            button.classList.add("module-option-wrong");
+          }
+          if (isSelected && correctAnswer == null) {
+            button.classList.add("module-option-selected");
+          }
+        } else {
+          button.addEventListener("click", async () => {
+            const optionButtons = Array.from(optionsWrap.querySelectorAll(".module-option-btn"));
+            optionButtons.forEach((candidate) => {
+              candidate.disabled = true;
+              candidate.classList.remove("module-option-selected");
+            });
+            button.classList.add("module-option-selected");
+            statusText.textContent = "";
+            try {
+              const payload = {
+                sectionId: section.section_id,
+                sectionNumber: Number(section.order_number || activeSectionIndex + 1),
+                questionId: question.question_id,
+                questionNumber,
+                questionContent: question.prompt || question.question_id,
+                answer: option,
+                correctAnswer
+              };
+              const saveResp = await fetch(`/api/session/${state.token}/modules/${step.key}/answer`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+              });
+
+              if (!saveResp.ok) {
+                const err = await saveResp.json().catch(() => ({}));
+                throw new Error(err?.error || "Could not save answer");
+              }
+
+              const saveData = await saveResp.json();
+              responseMap.set(responseKey, {
+                sectionId: section.section_id,
+                questionId: question.question_id,
+                answer: option,
+                correctAnswer,
+                isCorrect: saveData?.isCorrect
+              });
+              drawSection();
+            } catch (error) {
+              console.error(error);
+              statusText.textContent = "לא ניתן לשמור את התשובה כרגע. נסו שוב.";
+              optionButtons.forEach((candidate) => {
+                candidate.disabled = false;
+              });
+            }
           });
-          responseMap.set(`${activeChunkIndex}::${qid}`, answer);
         }
-      } finally {
-        nextBtn.disabled = false;
-      }
+        optionsWrap.appendChild(button);
+      });
+      questionBlock.appendChild(optionsWrap);
+      questionBlock.appendChild(statusText);
+      card.appendChild(questionBlock);
+    });
 
-      if (activeChunkIndex < chunks.length - 1) {
-        activeChunkIndex += 1;
-        drawChunk();
+    const footer = document.createElement("div");
+    footer.className = "module-footer";
+    const prevBtn = document.createElement("button");
+    prevBtn.type = "button";
+    prevBtn.className = "ghost-button";
+    prevBtn.textContent = "הקודם";
+    prevBtn.disabled = activeSectionIndex === 0;
+    prevBtn.addEventListener("click", () => {
+      if (activeSectionIndex > 0) {
+        activeSectionIndex -= 1;
+        drawSection();
+      }
+    });
+
+    const nextBtn = document.createElement("button");
+    nextBtn.type = "button";
+    nextBtn.className = "ghost-button";
+    const isLast = activeSectionIndex === sections.length - 1;
+    nextBtn.textContent = isLast ? "סיום המודול" : "הבא";
+
+    const hasPendingQuestions = questions.some(
+      (question) => !responseMap.has(`${section.section_id}::${question.question_id}`)
+    );
+    nextBtn.disabled = hasPendingQuestions;
+
+    nextBtn.addEventListener("click", async () => {
+      if (hasPendingQuestions) return;
+      if (!isLast) {
+        activeSectionIndex += 1;
+        drawSection();
       } else {
         state.currentStepIndex += 1;
         await renderCurrentStep();
       }
     });
 
-    card.appendChild(formEl);
+    footer.appendChild(prevBtn);
+    footer.appendChild(nextBtn);
+    card.appendChild(footer);
+
     stepContainer.innerHTML = "";
     stepContainer.appendChild(card);
   };
 
-  drawChunk();
+  drawSection();
 }
 
-function renderModule(moduleDef) {
-  moduleState = {
-    def: moduleDef,
-    chapterIndex: 0,
-    pageIndex: 0,
-    answered: false
-  };
-  drawModulePage();
-}
-
-function drawModulePage() {
+function drawLegacyModulePage() {
   if (!moduleState?.def) return;
   const { def, chapterIndex, pageIndex } = moduleState;
   const chapter = def.chapters[chapterIndex];
   const page = chapter.pages[pageIndex];
-  // Always recalculate navigation state for current chapter/page
   const lastChapter = chapterIndex === def.chapters.length - 1;
   const lastPageInChapter = pageIndex === chapter.pages.length - 1;
 
@@ -1264,7 +1549,7 @@ function drawModulePage() {
       moduleState.chapterIndex -= 1;
       moduleState.pageIndex = moduleState.def.chapters[moduleState.chapterIndex].pages.length - 1;
     }
-    drawModulePage();
+    drawLegacyModulePage();
   });
 
   const nextBtn = document.createElement("button");
@@ -1291,7 +1576,7 @@ function drawModulePage() {
       renderCurrentStep();
       return;
     }
-    drawModulePage();
+    drawLegacyModulePage();
   });
 
   footer.appendChild(prevBtn);

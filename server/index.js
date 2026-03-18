@@ -29,8 +29,8 @@ import {
   getSessionPersona,
   listMessagesBySessionPersona,
   listSessionsByParticipant,
-  saveReadingTaskResponse,
-  listReadingTaskResponses
+  saveModuleQuestionResponse,
+  listModuleQuestionResponses
 } from "./db.js";
 import { ensureSessionPersonas, buildPersonaPrompt } from "./utils/personaLoader.js";
 
@@ -96,7 +96,6 @@ function challengeAdminAuth(res) {
 }
 
 const sessionFlowPath = path.join(__dirname, "config", "sessionFlow.json");
-const readingTaskPath = path.join(__dirname, "config", "readingTask.json");
 const formsDir = path.join(__dirname, "forms");
 const modulesDir = path.join(__dirname, "modules");
 
@@ -110,21 +109,17 @@ function loadSessionFlow() {
   }
 }
 
-function loadReadingTaskConfig() {
-  try {
-    const raw = fs.readFileSync(readingTaskPath, "utf-8");
-    return JSON.parse(raw);
-  } catch (error) {
-    console.error("Failed to load reading task config", error);
-    return { key: "book_chapter", halves: { withdrawal: { chunks: [] }, confrontation: { chunks: [] } } };
-  }
-}
-
 function getOrderedReadingHalf(readingOrder, halfOrder) {
   const normalizedOrder = readingOrder === "confrontation_first" ? "confrontation_first" : "withdrawal_first";
   const firstHalf = normalizedOrder === "withdrawal_first" ? "withdrawal" : "confrontation";
   const secondHalf = firstHalf === "withdrawal" ? "confrontation" : "withdrawal";
   return Number(halfOrder) === 2 ? secondHalf : firstHalf;
+}
+
+function resolveModuleKeyByOrder(session, step) {
+  const half = getOrderedReadingHalf(session.readingOrder, step.moduleOrder);
+  const moduleKey = step?.moduleByHalf?.[half] || null;
+  return { half, moduleKey };
 }
 
 function getGroupSessions(flow, groupAssignment) {
@@ -146,12 +141,15 @@ function getSessionSteps(session) {
   const definition = getSessionDefinition(session.groupAssignment, session.sessionNumber);
   const rawSteps = Array.isArray(definition.steps) ? definition.steps : [{ type: "chat" }];
   return rawSteps.map((step) => {
-    if (step.type !== "reading_task") return { ...step };
-    let resolvedHalf = step.half || null;
-    if (!resolvedHalf && step.halfSource === "reading_order") {
-      resolvedHalf = getOrderedReadingHalf(session.readingOrder, step.halfOrder);
+    if (step.type !== "module") return { ...step };
+    let resolvedKey = step.key || null;
+    let resolvedHalf = null;
+    if (!resolvedKey && step.keySource === "reading_order") {
+      const resolved = resolveModuleKeyByOrder(session, step);
+      resolvedHalf = resolved.half;
+      resolvedKey = resolved.moduleKey;
     }
-    return { ...step, resolvedHalf };
+    return { ...step, key: resolvedKey, resolvedHalf };
   });
 }
 
@@ -249,7 +247,7 @@ async function maybeMarkSessionCompleted(session) {
   if (!session?.sessionId) return false;
   const steps = getSessionSteps(session);
   const hasChat = steps.some((step) => step.type === "chat");
-  const readingSteps = steps.filter((step) => step.type === "reading_task");
+  const moduleSteps = steps.filter((step) => step.type === "module" && step.key);
 
   if (hasChat) {
     const personas = await getSessionPersonas(session.sessionId);
@@ -263,36 +261,39 @@ async function maybeMarkSessionCompleted(session) {
     });
 
     if (!allChatsCompleted) return false;
-  } else if (readingSteps.length) {
-    const readingConfig = loadReadingTaskConfig();
-    for (const readingStep of readingSteps) {
-      const halfKey = readingStep.resolvedHalf;
-      const readingKey = readingStep.key || readingConfig.key;
-      if (!halfKey) return false;
-      const chunks = readingConfig?.halves?.[halfKey]?.chunks || [];
-      if (!chunks.length) {
+  } else if (moduleSteps.length) {
+    for (const moduleStep of moduleSteps) {
+      const moduleDef = loadModuleDefinition(moduleStep.key);
+      if (!moduleDef) return false;
+
+      const sections = Array.isArray(moduleDef.sections) ? moduleDef.sections : [];
+      const questions = sections.flatMap((section) =>
+        (section.questions || []).map((question) => ({
+          sectionId: section.section_id,
+          questionId: question.question_id
+        }))
+      );
+      if (!questions.length) {
         continue;
       }
-      const responses = await listReadingTaskResponses({
+
+      const responses = await listModuleQuestionResponses({
         participantId: session.participantId,
         sessionNumber: session.sessionNumber,
-        readingKey,
-        readingHalf: halfKey
+        moduleName: moduleStep.key
       });
 
       const answeredSet = new Set(
-        responses.map((r) => `${Number(r.chunkIndex)}::${String(r.questionId || "")}`)
+        responses.map((r) => `${String(r.sectionId || "")}::${String(r.questionId || "")}`)
       );
 
-      for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx += 1) {
-        const questions = chunks[chunkIdx]?.questions || [];
-        for (const question of questions) {
-          const qid = String(question.id || "");
-          if (!qid) continue;
-          const key = `${chunkIdx}::${qid}`;
-          if (!answeredSet.has(key)) {
-            return false;
-          }
+      for (const question of questions) {
+        const sectionId = String(question.sectionId || "");
+        const questionId = String(question.questionId || "");
+        if (!sectionId || !questionId) continue;
+        const key = `${sectionId}::${questionId}`;
+        if (!answeredSet.has(key)) {
+          return false;
         }
       }
     }
@@ -380,6 +381,22 @@ function loadModuleDefinition(moduleKey) {
   }
   const raw = fs.readFileSync(modulePath, "utf-8");
   return JSON.parse(raw);
+}
+
+function findModuleSectionAndQuestion(moduleDef, sectionId, questionId) {
+  const sections = Array.isArray(moduleDef?.sections) ? moduleDef.sections : [];
+  const section = sections.find((candidate) => String(candidate.section_id) === String(sectionId));
+  if (!section) return { section: null, question: null, questionNumber: null };
+  const questions = Array.isArray(section.questions) ? section.questions : [];
+  const questionIndex = questions.findIndex((candidate) => String(candidate.question_id) === String(questionId));
+  if (questionIndex < 0) {
+    return { section, question: null, questionNumber: null };
+  }
+  return {
+    section,
+    question: questions[questionIndex],
+    questionNumber: questionIndex + 1
+  };
 }
 
 app.use("/api/admin", adminAuth);
@@ -516,6 +533,8 @@ app.get("/api/forms/:formKey", (req, res) => {
 });
 
 app.get("/api/modules/:moduleKey", (req, res) => {
+  // Ensure clients do not cache module JSON; always fetch fresh content.
+  res.setHeader("Cache-Control", "no-store, max-age=0");
   const moduleDef = loadModuleDefinition(req.params.moduleKey);
   if (!moduleDef) {
     return res.status(404).json({ error: "Module not found." });
@@ -824,73 +843,43 @@ app.post("/api/session/:token/message", async (req, res) => {
   }
 });
 
-app.get("/api/session/:token/reading/:readingHalf", async (req, res) => {
+app.get("/api/session/:token/modules/:moduleKey/responses", async (req, res) => {
   try {
-    const { token, readingHalf } = req.params;
+    const { token, moduleKey } = req.params;
     const session = await getSessionByToken(token);
     if (!session) {
       return res.status(404).json({ error: "Session not found." });
     }
 
     const steps = getSessionSteps(session);
-    const readingStep = steps.find((step) => step.type === "reading_task" && step.resolvedHalf === readingHalf);
-    if (!readingStep) {
-      return res.status(400).json({ error: "Reading task not part of this session." });
+    const allowed = steps.some((step) => step.type === "module" && step.key === moduleKey);
+    if (!allowed) {
+      return res.status(400).json({ error: "Module not part of this session." });
     }
 
-    const readingConfig = loadReadingTaskConfig();
-    const halfConfig = readingConfig?.halves?.[readingHalf];
-    if (!halfConfig) {
-      return res.status(404).json({ error: "Reading half not found." });
-    }
-
-    return res.json({
-      readingKey: readingStep.key || readingConfig.key,
-      readingHalf,
-      title: halfConfig.title || readingHalf,
-      chunks: halfConfig.chunks || []
-    });
-  } catch (error) {
-    console.error("Failed to load reading task", error);
-    return res.status(500).json({ error: error?.message || "Could not load reading task." });
-  }
-});
-
-app.get("/api/session/:token/reading/:readingHalf/responses", async (req, res) => {
-  try {
-    const { token, readingHalf } = req.params;
-    const session = await getSessionByToken(token);
-    if (!session) {
-      return res.status(404).json({ error: "Session not found." });
-    }
-
-    const steps = getSessionSteps(session);
-    const readingStep = steps.find((step) => step.type === "reading_task" && step.resolvedHalf === readingHalf);
-    if (!readingStep) {
-      return res.status(400).json({ error: "Reading task not part of this session." });
-    }
-
-    const readingConfig = loadReadingTaskConfig();
-    const readingKey = readingStep.key || readingConfig.key;
-    const responses = await listReadingTaskResponses({
+    const responses = await listModuleQuestionResponses({
       participantId: session.participantId,
       sessionNumber: session.sessionNumber,
-      readingKey,
-      readingHalf
+      moduleName: moduleKey
     });
     return res.json({ responses });
   } catch (error) {
-    console.error("Failed to load reading responses", error);
-    return res.status(500).json({ error: error?.message || "Could not load reading responses." });
+    console.error("Failed to load module responses", error);
+    return res.status(500).json({ error: error?.message || "Could not load module responses." });
   }
 });
 
-app.post("/api/session/:token/reading/:readingHalf/response", async (req, res) => {
+app.post("/api/session/:token/modules/:moduleKey/answer", async (req, res) => {
   try {
-    const { token, readingHalf } = req.params;
-    const { chunkIndex, questionId, questionPrompt, answer } = req.body || {};
-    if (!Number.isInteger(Number(chunkIndex)) || !questionId) {
-      return res.status(400).json({ error: "chunkIndex and questionId are required." });
+    const { token, moduleKey } = req.params;
+    const {
+      sectionId,
+      sectionNumber,
+      questionId,
+      answer
+    } = req.body || {};
+    if (!sectionId || !questionId || answer == null) {
+      return res.status(400).json({ error: "sectionId, questionId and answer are required." });
     }
 
     const session = await getSessionByToken(token);
@@ -899,30 +888,62 @@ app.post("/api/session/:token/reading/:readingHalf/response", async (req, res) =
     }
 
     const steps = getSessionSteps(session);
-    const readingStep = steps.find((step) => step.type === "reading_task" && step.resolvedHalf === readingHalf);
-    if (!readingStep) {
-      return res.status(400).json({ error: "Reading task not part of this session." });
+    const allowed = steps.some((step) => step.type === "module" && step.key === moduleKey);
+    if (!allowed) {
+      return res.status(400).json({ error: "Module not part of this session." });
+    }
+
+    const moduleDef = loadModuleDefinition(moduleKey);
+    if (!moduleDef) {
+      return res.status(404).json({ error: "Module not found." });
+    }
+    const resolved = findModuleSectionAndQuestion(moduleDef, sectionId, questionId);
+    if (!resolved.section || !resolved.question) {
+      return res.status(400).json({ error: "Question not found in module definition." });
     }
 
     await markSessionStarted(session.sessionId);
-    const readingConfig = loadReadingTaskConfig();
-    const readingKey = readingStep.key || readingConfig.key;
-    await saveReadingTaskResponse({
+    const refreshedSession = await getSessionByToken(token);
+    const answeredAt = new Date();
+    const startedAtMs = refreshedSession?.startedAt ? new Date(refreshedSession.startedAt).getTime() : null;
+    const elapsedMinutes = startedAtMs ? (answeredAt.getTime() - startedAtMs) / 60000 : null;
+
+    const normalizedAnswer = String(answer);
+    const correctIndex = Number.isInteger(Number(resolved.question.correct_answer_index))
+      ? Number(resolved.question.correct_answer_index)
+      : null;
+    const moduleOptions = Array.isArray(resolved.question.options) ? resolved.question.options : [];
+    const normalizedCorrectAnswer = correctIndex == null ? null : String(moduleOptions[correctIndex] ?? "");
+    const isCorrect = normalizedCorrectAnswer == null ? null : (normalizedAnswer === normalizedCorrectAnswer);
+
+    const saveResult = await saveModuleQuestionResponse({
       participantId: session.participantId,
+      sessionId: session.sessionId,
       sessionNumber: session.sessionNumber,
-      readingKey,
-      readingHalf,
-      chunkIndex: Number(chunkIndex),
+      moduleName: moduleKey,
+      sectionId: String(sectionId),
+      sectionNumber: Number.isFinite(Number(sectionNumber))
+        ? Number(sectionNumber)
+        : Number(resolved.section.order_number) || null,
       questionId: String(questionId),
-      questionPrompt: questionPrompt || null,
-      answer
+      questionNumber: resolved.questionNumber,
+      questionContent: resolved.question.prompt || resolved.question.question_id || null,
+      answer: normalizedAnswer,
+      correctAnswer: normalizedCorrectAnswer,
+      isCorrect,
+      timedate: answeredAt.toISOString(),
+      timeSinceStart: elapsedMinutes
     });
 
+    if (!saveResult.inserted) {
+      return res.status(409).json({ error: "Question already answered and locked." });
+    }
+
     await maybeMarkSessionCompleted(session);
-    return res.json({ ok: true });
+    return res.json({ ok: true, isCorrect });
   } catch (error) {
-    console.error("Failed to save reading response", error);
-    return res.status(500).json({ error: error?.message || "Could not save reading response." });
+    console.error("Failed to save module answer", error);
+    return res.status(500).json({ error: error?.message || "Could not save module answer." });
   }
 });
 
@@ -935,7 +956,7 @@ app.post("/api/session/:token/complete", async (req, res) => {
     }
     const completed = await maybeMarkSessionCompleted(session);
     if (!completed) {
-      return res.status(400).json({ error: "Session cannot be completed until all chats reach the time requirement." });
+      return res.status(400).json({ error: "Session cannot be completed until all required steps are finished." });
     }
     res.json({ ok: true });
   } catch (error) {
