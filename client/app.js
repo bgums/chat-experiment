@@ -1116,11 +1116,6 @@ async function renderCombinedSectionModule(step, sections, moduleStepCount) {
     title.textContent = step?.moduleTitle || section.title || "מודול";
     card.appendChild(title);
 
-    const subtitle = document.createElement("p");
-    subtitle.className = "muted";
-    subtitle.textContent = `חלק ${activeSectionIndex + 1} מתוך ${sectionsSorted.length}`;
-    card.appendChild(subtitle);
-
     const sectionTitle = document.createElement("h4");
     sectionTitle.textContent = section.title || `Section ${activeSectionIndex + 1}`;
     card.appendChild(sectionTitle);
@@ -1310,11 +1305,6 @@ async function renderSectionModule(step, moduleDef) {
     title.textContent = moduleDef.module_title || moduleDef.title || "מודול";
     card.appendChild(title);
 
-    const subtitle = document.createElement("p");
-    subtitle.className = "muted";
-    subtitle.textContent = `חלק ${activeSectionIndex + 1} מתוך ${sections.length}`;
-    card.appendChild(subtitle);
-
     const sectionTitle = document.createElement("h4");
     sectionTitle.textContent = section.title || `Section ${activeSectionIndex + 1}`;
     card.appendChild(sectionTitle);
@@ -1488,7 +1478,6 @@ function drawLegacyModulePage() {
   title.textContent = def.title;
   const subtitle = document.createElement("p");
   subtitle.className = "muted";
-  subtitle.textContent = `פרק ${chapterIndex + 1}/${def.chapters.length} · עמוד ${pageIndex + 1}/${chapter.pages.length}`;
   header.appendChild(title);
   header.appendChild(subtitle);
   card.appendChild(header);
