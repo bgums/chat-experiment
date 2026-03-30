@@ -493,9 +493,9 @@ async function maybeMarkSessionCompleted(session) {
 
       const sections = Array.isArray(moduleDef.sections) ? moduleDef.sections : [];
       const questions = sections.flatMap((section) =>
-        (section.questions || []).map((question) => ({
+        (section.questions || []).map((question, idx) => ({
           sectionId: section.section_id,
-          questionId: question.question_id
+          questionId: getModuleQuestionId(section, question, idx)
         }))
       );
       if (!questions.length) {
@@ -608,18 +608,26 @@ function loadModuleDefinition(moduleKey) {
   return JSON.parse(raw);
 }
 
+function getModuleQuestionId(section, question, questionIndex) {
+  const raw = question?.question_id;
+  if (raw !== undefined && raw !== null && String(raw).trim() !== "") {
+    return String(raw);
+  }
+  return `${String(section?.section_id || "")}__q${Number(questionIndex) + 1}`;
+}
+
 function findModuleSectionAndQuestion(moduleDef, sectionId, questionId) {
   const sections = Array.isArray(moduleDef?.sections) ? moduleDef.sections : [];
   const section = sections.find((candidate) => String(candidate.section_id) === String(sectionId));
   if (!section) return { section: null, question: null, questionNumber: null };
   const questions = Array.isArray(section.questions) ? section.questions : [];
-  const questionIndex = questions.findIndex((candidate) => String(candidate.question_id) === String(questionId));
-  if (questionIndex < 0) {
-    return { section, question: null, questionNumber: null };
-  }
+  let questionIndex = questions.findIndex((candidate, idx) => getModuleQuestionId(section, candidate, idx) === String(questionId || ""));
+  if (questionIndex < 0 && !questionId && questions.length === 1) questionIndex = 0;
+  if (questionIndex < 0) return { section, question: null, questionNumber: null };
   return {
     section,
     question: questions[questionIndex],
+    questionId: getModuleQuestionId(section, questions[questionIndex], questionIndex),
     questionNumber: questionIndex + 1
   };
 }
@@ -1103,8 +1111,8 @@ app.post("/api/session/:token/modules/:moduleKey/answer", async (req, res) => {
       questionId,
       answer
     } = req.body || {};
-    if (!sectionId || !questionId || answer == null) {
-      return res.status(400).json({ error: "sectionId, questionId and answer are required." });
+    if (!sectionId || answer == null) {
+      return res.status(400).json({ error: "sectionId and answer are required." });
     }
 
     const session = await getSessionByToken(token);
@@ -1150,9 +1158,9 @@ app.post("/api/session/:token/modules/:moduleKey/answer", async (req, res) => {
       sectionNumber: Number.isFinite(Number(sectionNumber))
         ? Number(sectionNumber)
         : Number(resolved.section.order_number) || null,
-      questionId: String(questionId),
+      questionId: String(resolved.questionId || questionId || ""),
       questionNumber: resolved.questionNumber,
-      questionContent: resolved.question.prompt || resolved.question.question_id || null,
+      questionContent: resolved.question.prompt || resolved.questionId || null,
       answer: normalizedAnswer,
       correctAnswer: normalizedCorrectAnswer,
       isCorrect,

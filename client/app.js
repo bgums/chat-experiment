@@ -1088,6 +1088,14 @@ async function renderModule(step) {
   await renderCombinedSectionModule(step, combinedSections, moduleKeys.length);
 }
 
+function getQuestionId(section, question, index) {
+  const raw = question?.question_id;
+  if (raw !== undefined && raw !== null && String(raw).trim() !== "") {
+    return String(raw);
+  }
+  return `${String(section?.section_id || "")}__q${index + 1}`;
+}
+
 async function renderCombinedSectionModule(step, sections, moduleStepCount) {
   // Aggregate responses for all involved modules
   const moduleKeys = Array.from(new Set(sections.map((s) => s.__moduleKey)));
@@ -1102,7 +1110,7 @@ async function renderCombinedSectionModule(step, sections, moduleStepCount) {
   let activeSectionIndex = 0;
   const firstUnansweredIdx = sectionsSorted.findIndex((section) => {
     const questions = section.questions || [];
-    return questions.some((question) => !responseMap.has(`${section.section_id}::${question.question_id}`));
+    return questions.some((question, idx) => !responseMap.has(`${section.section_id}::${getQuestionId(section, question, idx)}`));
   });
   if (firstUnansweredIdx >= 0) activeSectionIndex = firstUnansweredIdx;
 
@@ -1129,7 +1137,8 @@ async function renderCombinedSectionModule(step, sections, moduleStepCount) {
 
     questions.forEach((question, idx) => {
       const questionNumber = idx + 1;
-      const responseKey = `${section.section_id}::${question.question_id}`;
+      const resolvedQuestionId = getQuestionId(section, question, idx);
+      const responseKey = `${section.section_id}::${resolvedQuestionId}`;
       const existing = responseMap.get(responseKey);
       const answerLocked = Boolean(existing);
       const selectedAnswer = existing?.answer;
@@ -1141,7 +1150,7 @@ async function renderCombinedSectionModule(step, sections, moduleStepCount) {
 
       const prompt = document.createElement("p");
       prompt.className = "module-question";
-      prompt.textContent = `${questionNumber}. ${question.prompt || question.question_id}`;
+      prompt.textContent = `${question.prompt || resolvedQuestionId}`;
       questionBlock.appendChild(prompt);
 
       const optionsWrap = document.createElement("div");
@@ -1180,9 +1189,9 @@ async function renderCombinedSectionModule(step, sections, moduleStepCount) {
               const payload = {
                 sectionId: section.section_id,
                 sectionNumber: Number(section.order_number || activeSectionIndex + 1),
-                questionId: question.question_id,
+                questionId: resolvedQuestionId,
                 questionNumber,
-                questionContent: question.prompt || question.question_id,
+                questionContent: question.prompt || resolvedQuestionId,
                 answer: option,
                 correctAnswer
               };
@@ -1200,7 +1209,7 @@ async function renderCombinedSectionModule(step, sections, moduleStepCount) {
               const saveData = await saveResp.json();
               responseMap.set(responseKey, {
                 sectionId: section.section_id,
-                questionId: question.question_id,
+                questionId: resolvedQuestionId,
                 answer: option,
                 correctAnswer,
                 isCorrect: saveData?.isCorrect
@@ -1243,7 +1252,7 @@ async function renderCombinedSectionModule(step, sections, moduleStepCount) {
     nextBtn.textContent = isLast ? "סיום המודול" : "הבא";
 
     const hasPendingQuestions = questions.some(
-      (question) => !responseMap.has(`${section.section_id}::${question.question_id}`)
+      (question, idx) => !responseMap.has(`${section.section_id}::${getQuestionId(section, question, idx)}`)
     );
     nextBtn.disabled = hasPendingQuestions;
 
@@ -1291,7 +1300,7 @@ async function renderSectionModule(step, moduleDef) {
   let activeSectionIndex = 0;
   const firstUnansweredIdx = sections.findIndex((section) => {
     const questions = section.questions || [];
-    return questions.some((question) => !responseMap.has(`${section.section_id}::${question.question_id}`));
+    return questions.some((question, idx) => !responseMap.has(`${section.section_id}::${getQuestionId(section, question, idx)}`));
   });
   if (firstUnansweredIdx >= 0) activeSectionIndex = firstUnansweredIdx;
 
@@ -1318,7 +1327,8 @@ async function renderSectionModule(step, moduleDef) {
 
     questions.forEach((question, idx) => {
       const questionNumber = idx + 1;
-      const responseKey = `${section.section_id}::${question.question_id}`;
+      const resolvedQuestionId = getQuestionId(section, question, idx);
+      const responseKey = `${section.section_id}::${resolvedQuestionId}`;
       const existing = responseMap.get(responseKey);
       const answerLocked = Boolean(existing);
       const selectedAnswer = existing?.answer;
@@ -1330,7 +1340,7 @@ async function renderSectionModule(step, moduleDef) {
 
       const prompt = document.createElement("p");
       prompt.className = "module-question";
-      prompt.textContent = `${questionNumber}. ${question.prompt || question.question_id}`;
+      prompt.textContent = `${question.prompt || resolvedQuestionId}`;
       questionBlock.appendChild(prompt);
 
       const optionsWrap = document.createElement("div");
@@ -1369,9 +1379,9 @@ async function renderSectionModule(step, moduleDef) {
               const payload = {
                 sectionId: section.section_id,
                 sectionNumber: Number(section.order_number || activeSectionIndex + 1),
-                questionId: question.question_id,
+                questionId: resolvedQuestionId,
                 questionNumber,
-                questionContent: question.prompt || question.question_id,
+                questionContent: question.prompt || resolvedQuestionId,
                 answer: option,
                 correctAnswer
               };
@@ -1389,7 +1399,7 @@ async function renderSectionModule(step, moduleDef) {
               const saveData = await saveResp.json();
               responseMap.set(responseKey, {
                 sectionId: section.section_id,
-                questionId: question.question_id,
+                questionId: resolvedQuestionId,
                 answer: option,
                 correctAnswer,
                 isCorrect: saveData?.isCorrect
@@ -1432,7 +1442,7 @@ async function renderSectionModule(step, moduleDef) {
     nextBtn.textContent = isLast ? "סיום המודול" : "הבא";
 
     const hasPendingQuestions = questions.some(
-      (question) => !responseMap.has(`${section.section_id}::${question.question_id}`)
+      (question, idx) => !responseMap.has(`${section.section_id}::${getQuestionId(section, question, idx)}`)
     );
     nextBtn.disabled = hasPendingQuestions;
 

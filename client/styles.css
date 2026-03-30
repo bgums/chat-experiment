@@ -81,6 +81,19 @@
   white-space: pre-line;
 }
 
+/* Ensure emphasized/italic text in module content uses the same font stack */
+.module-content-paragraph em,
+.module-content-paragraph i,
+.module-list em,
+.module-list i,
+.step-card em,
+.step-card i {
+  font-family: inherit;
+  font-style: normal; /* do not italicize; render as normal text */
+  color: var(--muted);
+  font-weight: 400;
+}
+
 .module-content-paragraph ul,
 .module-content-paragraph ol,
 .module-list {
@@ -114,7 +127,15 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-top: 12px;
+  margin-top: 30px;
+}
+
+/* Make module navigation buttons match body typography but slightly smaller */
+.module-footer .ghost-button {
+  font-family: inherit;
+  font-size: 0.95rem;
+  font-weight: 400;
+  padding: 8px 12px;
 }
 .step-nav-row {
   display: flex;
