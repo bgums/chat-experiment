@@ -65,6 +65,16 @@ const MID_PROMPT_MINUTES = 9;
 const MID_PROMPT_MS = MID_PROMPT_MINUTES * 60 * 1000;
 const FEEDBACK_MIN_PARTICIPANT_MESSAGES = 2;
 const FEEDBACK_FALLBACK_TEXT = "feedback could not be provided as the chat did not meet the requirements";
+const FEEDBACK_SYSTEM_BUSY_TEXT = "Feedback is delayed due to temporary system load. Please wait a moment and it will appear automatically.";
+const FEEDBACK_POLL_AFTER_MS = Math.max(500, Number(process.env.FEEDBACK_POLL_AFTER_MS || 2000));
+const FEEDBACK_MAX_CONCURRENCY = Math.max(1, Number(process.env.FEEDBACK_MAX_CONCURRENCY || 3));
+const FEEDBACK_MAX_RETRIES = Math.max(0, Number(process.env.FEEDBACK_MAX_RETRIES || 6));
+const FEEDBACK_RETRY_BASE_MS = Math.max(250, Number(process.env.FEEDBACK_RETRY_BASE_MS || 1000));
+const FEEDBACK_RETRY_MAX_MS = Math.max(FEEDBACK_RETRY_BASE_MS, Number(process.env.FEEDBACK_RETRY_MAX_MS || 15000));
+
+const feedbackJobsByPersona = new Map();
+const feedbackJobQueue = [];
+let activeFeedbackWorkers = 0;
 
 const app = express();
 app.use(cors());
@@ -189,6 +199,221 @@ function withPersonaDisplay(personaJson) {
   } catch (error) {
     return {};
   }
+}
+
+function getErrorMessage(error) {
+  return error?.response?.data?.error?.message || error?.message || "Unknown error";
+}
+
+function getErrorStatus(error) {
+  const status = Number(error?.status || error?.statusCode || error?.response?.status || 0);
+  return Number.isFinite(status) ? status : 0;
+}
+
+function isRetryableFeedbackError(error) {
+  const status = getErrorStatus(error);
+  if (status === 429 || status >= 500) {
+    return true;
+  }
+
+  const code = String(error?.code || error?.response?.data?.error?.code || "").toLowerCase();
+  const message = getErrorMessage(error).toLowerCase();
+  if (code.includes("rate") || code.includes("timeout") || code.includes("tempor")) {
+    return true;
+  }
+  if (message.includes("rate limit") || message.includes("timeout") || message.includes("tempor")) {
+    return true;
+  }
+
+  return false;
+}
+
+function feedbackRetryDelayMs(attemptNumber) {
+  const expDelay = FEEDBACK_RETRY_BASE_MS * (2 ** Math.max(0, attemptNumber - 1));
+  const jitter = Math.floor(Math.random() * 250);
+  return Math.min(FEEDBACK_RETRY_MAX_MS, expDelay) + jitter;
+}
+
+async function getExistingFeedbackMessage(sessionPersonaId) {
+  const existingMessages = await listMessagesBySessionPersona(sessionPersonaId);
+  return [...existingMessages].reverse().find((m) => m.role === "assistant_feedback") || null;
+}
+
+async function persistFeedbackMessage({ session, sessionPersonaId, conversationId, content }) {
+  await savePersonaMessage({
+    participantId: session.participantId,
+    sessionNumber: session.sessionNumber,
+    role: "assistant_feedback",
+    content,
+    sessionPersonaId,
+    conversationId: conversationId || null
+  });
+  await markSessionPersonaFeedbackSent(sessionPersonaId);
+  await maybeMarkSessionCompleted(session);
+}
+
+async function generateEligibleFeedback({ session, sessionPersonaId, personaRecord }) {
+  const personaData = withPersonaDisplay(personaRecord.personaJson);
+
+  let conversationId = personaRecord.conversationId;
+  if (!conversationId) {
+    const conversation = await createConversation();
+    conversationId = conversation.id;
+    await saveSessionPersonaConversationId(sessionPersonaId, conversationId);
+  }
+
+  const instructions = combineFeedbackPrompt(personaData);
+  const personaFields = personaFieldStatus(personaData);
+
+  logPromptEvent("feedback", {
+    sessionNumber: session.sessionNumber,
+    participantCode: session.participantCode,
+    sessionPersonaId,
+    conversationId,
+    personaFields,
+    instructionsLength: instructions.length,
+    instructions
+  });
+
+  const response = await createResponse({
+    model: MODEL_ID,
+    conversation: conversationId,
+    instructions,
+    tools: [
+      {
+        type: "file_search",
+        vector_store_ids: [VECTOR_STORE_ID]
+      }
+    ],
+    input: [
+      {
+        role: "user",
+        content: [
+          { type: "input_text", text: "סכם פידבק לפי ההנחיות." }
+        ]
+      }
+    ]
+  });
+
+  const assistantText = extractTextFromResponse(response);
+  await persistFeedbackMessage({
+    session,
+    sessionPersonaId,
+    conversationId,
+    content: assistantText
+  });
+}
+
+function runFeedbackQueue() {
+  while (activeFeedbackWorkers < FEEDBACK_MAX_CONCURRENCY && feedbackJobQueue.length > 0) {
+    const job = feedbackJobQueue.shift();
+    if (!job || job.status === "running") {
+      continue;
+    }
+
+    activeFeedbackWorkers += 1;
+    job.status = "running";
+
+    processFeedbackJob(job)
+      .catch((error) => {
+        console.error("Unexpected feedback worker failure", error);
+      })
+      .finally(() => {
+        activeFeedbackWorkers -= 1;
+        runFeedbackQueue();
+      });
+  }
+}
+
+function scheduleFeedbackRetry(job) {
+  const delay = feedbackRetryDelayMs(job.attempt);
+  job.status = "retry_scheduled";
+  setTimeout(() => {
+    if (!feedbackJobsByPersona.has(job.key)) {
+      return;
+    }
+    job.status = "queued";
+    feedbackJobQueue.push(job);
+    runFeedbackQueue();
+  }, delay);
+}
+
+async function processFeedbackJob(job) {
+  const session = await getSessionByToken(job.token);
+  if (!session) {
+    feedbackJobsByPersona.delete(job.key);
+    return;
+  }
+
+  const personaRecord = await getSessionPersona(job.sessionPersonaId);
+  if (!personaRecord || personaRecord.sessionId !== session.sessionId) {
+    feedbackJobsByPersona.delete(job.key);
+    return;
+  }
+
+  const existingFeedback = await getExistingFeedbackMessage(job.sessionPersonaId);
+  if (existingFeedback) {
+    job.status = "completed";
+    feedbackJobsByPersona.delete(job.key);
+    return;
+  }
+
+  try {
+    await generateEligibleFeedback({ session, sessionPersonaId: job.sessionPersonaId, personaRecord });
+    job.status = "completed";
+    feedbackJobsByPersona.delete(job.key);
+  } catch (error) {
+    job.lastError = getErrorMessage(error);
+    const retryable = isRetryableFeedbackError(error);
+
+    if (retryable && job.attempt < FEEDBACK_MAX_RETRIES) {
+      job.attempt += 1;
+      scheduleFeedbackRetry(job);
+      return;
+    }
+
+    console.error("Feedback job failed permanently", {
+      sessionPersonaId: job.sessionPersonaId,
+      attempts: job.attempt,
+      retryable,
+      error: job.lastError
+    });
+
+    const fallbackFeedback = await getExistingFeedbackMessage(job.sessionPersonaId);
+    if (!fallbackFeedback) {
+      await persistFeedbackMessage({
+        session,
+        sessionPersonaId: job.sessionPersonaId,
+        conversationId: personaRecord.conversationId || null,
+        content: FEEDBACK_SYSTEM_BUSY_TEXT
+      });
+    }
+    job.status = "failed";
+    feedbackJobsByPersona.delete(job.key);
+  }
+}
+
+function enqueueFeedbackJob({ token, sessionPersonaId }) {
+  const key = String(sessionPersonaId);
+  const existing = feedbackJobsByPersona.get(key);
+  if (existing) {
+    return existing;
+  }
+
+  const job = {
+    key,
+    token,
+    sessionPersonaId: Number(sessionPersonaId),
+    status: "queued",
+    createdAt: Date.now(),
+    attempt: 0,
+    lastError: null
+  };
+
+  feedbackJobsByPersona.set(key, job);
+  feedbackJobQueue.push(job);
+  runFeedbackQueue();
+  return job;
 }
 
 function logPromptEvent(label, payload) {
@@ -1041,11 +1266,14 @@ app.post("/api/session/:token/persona/:sessionPersonaId/feedback", async (req, r
       return res.status(404).json({ error: "Persona not found for this session." });
     }
 
-    const personaData = withPersonaDisplay(personaRecord.personaJson);
     const existingMessages = await listMessagesBySessionPersona(sessionPersonaId);
     const existingFeedback = [...existingMessages].reverse().find((m) => m.role === "assistant_feedback");
     if (existingFeedback) {
-      return res.json({ response: existingFeedback.content, conversationId: personaRecord.conversationId || null });
+      return res.json({
+        ready: true,
+        response: existingFeedback.content,
+        conversationId: personaRecord.conversationId || null
+      });
     }
 
     const participantMessageCount = existingMessages.filter((m) => m.role === "user").length;
@@ -1058,84 +1286,33 @@ app.post("/api/session/:token/persona/:sessionPersonaId/feedback", async (req, r
       && participantMessageCount >= FEEDBACK_MIN_PARTICIPANT_MESSAGES;
 
     if (!eligible) {
-      await savePersonaMessage({
-        participantId: session.participantId,
-        sessionNumber: session.sessionNumber,
-        role: "assistant_feedback",
-        content: FEEDBACK_FALLBACK_TEXT,
+      await persistFeedbackMessage({
+        session,
         sessionPersonaId,
-        conversationId: personaRecord.conversationId || null
+        conversationId: personaRecord.conversationId || null,
+        content: FEEDBACK_FALLBACK_TEXT
       });
-      await markSessionPersonaFeedbackSent(sessionPersonaId);
-      await maybeMarkSessionCompleted(session);
       return res.json({
+        ready: true,
         response: FEEDBACK_FALLBACK_TEXT,
         conversationId: personaRecord.conversationId || null,
         eligible: false
       });
     }
 
-    let conversationId = personaRecord.conversationId;
-    if (!conversationId) {
-      const conversation = await createConversation();
-      conversationId = conversation.id;
-      await saveSessionPersonaConversationId(sessionPersonaId, conversationId);
-    }
-
-    const instructions = combineFeedbackPrompt(personaData);
-    const personaFields = personaFieldStatus(personaData);
-
-    logPromptEvent("feedback", {
-      sessionNumber: session.sessionNumber,
-      participantCode: session.participantCode,
-      sessionPersonaId,
-      conversationId,
-      personaFields,
-      instructionsLength: instructions.length,
-      instructions
-    });
-
-    const response = await createResponse({
-      model: MODEL_ID,
-      conversation: conversationId,
-      instructions,
-      tools: [
-        {
-          type: "file_search",
-          vector_store_ids: [VECTOR_STORE_ID]
-        }
-      ],
-      input: [
-        {
-          role: "user",
-          content: [
-            { type: "input_text", text: "סכם פידבק לפי ההנחיות." }
-          ]
-        }
-      ]
-    });
-
-    const assistantText = extractTextFromResponse(response);
-
-    await savePersonaMessage({
-      participantId: session.participantId,
-      sessionNumber: session.sessionNumber,
-      role: "assistant_feedback",
-      content: assistantText,
-      sessionPersonaId,
-      conversationId
-    });
-    await markSessionPersonaFeedbackSent(sessionPersonaId);
-    await maybeMarkSessionCompleted(session);
-
-    return res.json({
-      conversationId,
-      response: assistantText,
-      eligible: true
+    const job = enqueueFeedbackJob({ token, sessionPersonaId });
+    return res.status(202).json({
+      ready: false,
+      pending: true,
+      eligible: true,
+      pollAfterMs: FEEDBACK_POLL_AFTER_MS,
+      status: job.status,
+      attempt: job.attempt,
+      queuedAt: job.createdAt
     });
   } catch (error) {
     console.error("Failed to generate feedback", error);
-    const message = error?.response?.data?.error?.message || error?.message || "Unknown error";
+    const message = getErrorMessage(error);
     return res.status(500).json({ error: message });
   }
 });

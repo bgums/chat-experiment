@@ -20,6 +20,7 @@ let currentChatStep = null;
 let chatLocked = false;
 let midPrimeTimeout = null;
 let activeFormController = null;
+let feedbackRenderCounter = 0;
 
 let moduleState = null;
 // Persist nextBtnRef across renders to avoid ReferenceError
@@ -40,6 +41,8 @@ const CHAT_DURATION_MS = CHAT_DURATION_MINUTES * 60 * 1000;
 const MID_PROMPT_MINUTES = 9;
 const MID_PROMPT_MS = MID_PROMPT_MINUTES * 60 * 1000;
 
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 const createMessageElement = (role, markdown) => {
   const wrapper = document.createElement("article");
   wrapper.classList.add("message");
@@ -59,8 +62,12 @@ function safeParseMarkdown(markdown, opts) {
   // Prefer using marked when available (support both marked.parse and marked())
   try {
     if (window.marked) {
-      if (typeof window.marked.parse === "function") return window.marked.parse(markdown || "", opts || {});
-      if (typeof window.marked === "function") return window.marked(markdown || "");
+      // Preserve leading blank lines so authors can insert intentional vertical space
+      // Convert one-or-more leading newlines into two <br> tags so the renderer shows a gap.
+      let md = String(markdown || "");
+      md = md.replace(/^(?:\r?\n\s*)+/, "<br><br>");
+      if (typeof window.marked.parse === "function") return window.marked.parse(md, opts || {});
+      if (typeof window.marked === "function") return window.marked(md);
     }
   } catch (e) {
     // fall through to simple fallback
@@ -420,6 +427,11 @@ function renderForm(formDef, step = {}, savedResponses = {}) {
       container.classList.add("likert-slider-container");
       
       const [min, max] = item.scale || [1, 5];
+      const parsedDefault = Number(item.default);
+      const midpoint = Math.round((Number(min) + Number(max)) / 2);
+      const sliderDefault = Number.isFinite(parsedDefault)
+        ? Math.min(max, Math.max(min, parsedDefault))
+        : midpoint;
       
       const slider = document.createElement("input");
       slider.type = "range";
@@ -427,6 +439,7 @@ function renderForm(formDef, step = {}, savedResponses = {}) {
       slider.min = min;
       slider.max = max;
       slider.step = 1;
+      slider.value = String(sliderDefault);
       slider.classList.add("likert-slider");
       slider.required = !!item.required;
       
@@ -853,7 +866,7 @@ async function renderChat(step) {
   setStepIndicator();
 }
 
-async function renderFeedback(step) {
+async function renderFeedback(step, renderId) {
   stopChatTimer();
   if (midPrimeTimeout) {
     clearTimeout(midPrimeTimeout);
@@ -884,24 +897,53 @@ async function renderFeedback(step) {
 
   stepContainer.appendChild(card);
 
-  try {
-    const response = await fetch(`/api/session/${state.token}/persona/${step.sessionPersonaId}/feedback`, { method: "POST" });
-    if (!response.ok) {
-      const err = await response.json();
-      throw new Error(err?.error || "Feedback request failed");
+  let retryDelayMs = 1500;
+  const maxWaitMs = 3 * 60 * 1000;
+  const waitStartedAt = Date.now();
+  const timeoutMessage = "ישנה בעיה עם טעינת הפידבק - אנא פנו למאיה סלומון במייל Salomonm@post.bgu.ac.il";
+
+  for (;;) {
+    if (renderId !== feedbackRenderCounter) {
+      return;
     }
-    const data = await response.json();
-    if (data.eligible === false) {
-      feedbackBody.textContent = data.response || "לא ניתן לספק פידבק כי הדרישות לא מולאו.";
-    } else {
-      feedbackBody.innerHTML = window.marked.parse(data.response || "");
+
+    if (Date.now() - waitStartedAt >= maxWaitMs) {
+      feedbackBody.textContent = timeoutMessage;
+      return;
     }
-  } catch (error) {
-    feedbackBody.textContent = `שגיאה בטעינת הפידבק: ${error.message}`;
+
+    try {
+      const response = await fetch(`/api/session/${state.token}/persona/${step.sessionPersonaId}/feedback`, { method: "POST" });
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(data?.error || "Feedback request failed");
+      }
+
+      if (data?.pending || data?.ready === false) {
+        const nextPollMs = Math.max(500, Number(data?.pollAfterMs) || 2000);
+        feedbackBody.textContent = "טוען פידבק...";
+        await wait(nextPollMs);
+        continue;
+      }
+
+      if (data.eligible === false) {
+        feedbackBody.textContent = data.response || "לא ניתן לספק פידבק כי הדרישות לא מולאו.";
+      } else {
+        feedbackBody.innerHTML = window.marked.parse(data.response || "");
+      }
+      return;
+    } catch (error) {
+      feedbackBody.textContent = "טוען פידבק...";
+      await wait(retryDelayMs);
+      retryDelayMs = Math.min(15000, Math.floor(retryDelayMs * 1.5));
+    }
   }
 }
 
 async function renderCurrentStep() {
+  feedbackRenderCounter += 1;
+  const renderId = feedbackRenderCounter;
   setStepIndicator();
   stopChatTimer();
   if (midPrimeTimeout) {
@@ -966,7 +1008,7 @@ async function renderCurrentStep() {
   }
 
   if (step.type === "feedback") {
-    await renderFeedback(step);
+    await renderFeedback(step, renderId);
     return;
   }
 

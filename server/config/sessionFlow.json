@@ -10,7 +10,7 @@
           "steps": [
             { "type": "form", "key": "consent" },
             { "type": "form", "key": "demographics" },
-            { "type": "module", "key": "rupture_repair_3rs" },
+            { "type": "module", "key": "introduction_module" },
             { "type": "chat" }
           ]
         },
@@ -49,7 +49,7 @@
           "steps": [
             { "type": "form", "key": "consent" },
             { "type": "form", "key": "demographics" },
-            { "type": "module", "key": "rupture_repair_3rs" },
+            { "type": "module", "key": "introduction_module" },
             { "type": "chat" }
           ]
         },
