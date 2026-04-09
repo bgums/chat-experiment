@@ -81,6 +81,16 @@
   white-space: pre-line;
 }
 
+/* If a content paragraph is followed by questions, remove extra gap */
+.module-content-paragraph + .module-question-block {
+  margin-top: 0;
+}
+
+/* Reduce bottom spacing on the last content paragraph to tighten flow */
+.module-content-paragraph:last-child {
+  margin-bottom: 4px;
+}
+
 /* Ensure emphasized/italic text in module content uses the same font stack */
 .module-content-paragraph em,
 .module-content-paragraph i,
@@ -115,7 +125,7 @@
 }
 
 .module-question-block {
-  margin-top: 10px;
+  margin-top: 0;
 }
 
 .module-feedback {

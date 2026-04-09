@@ -62,12 +62,8 @@ function safeParseMarkdown(markdown, opts) {
   // Prefer using marked when available (support both marked.parse and marked())
   try {
     if (window.marked) {
-      // Preserve leading blank lines so authors can insert intentional vertical space
-      // Convert one-or-more leading newlines into two <br> tags so the renderer shows a gap.
-      let md = String(markdown || "");
-      md = md.replace(/^(?:\r?\n\s*)+/, "<br><br>");
-      if (typeof window.marked.parse === "function") return window.marked.parse(md, opts || {});
-      if (typeof window.marked === "function") return window.marked(md);
+      if (typeof window.marked.parse === "function") return window.marked.parse(markdown || "", opts || {});
+      if (typeof window.marked === "function") return window.marked(markdown || "");
     }
   } catch (e) {
     // fall through to simple fallback
@@ -1076,11 +1072,13 @@ async function renderModule(step) {
   const combinedSections = [];
   defs.forEach((def, defIdx) => {
     const key = moduleKeys[defIdx];
+    const moduleTitle = def?.module_title || def?.title || null;
     const secs = Array.isArray(def.sections) ? def.sections : [];
     secs.forEach((sec) => {
       // attach internal metadata (non-serializable) to track origin module
       const secClone = Object.assign({}, sec);
       secClone.__moduleKey = key;
+      secClone.__moduleTitle = moduleTitle;
       combinedSections.push(secClone);
     });
   });
@@ -1112,7 +1110,7 @@ async function renderCombinedSectionModule(step, sections, moduleStepCount) {
     const questions = section.questions || [];
     return questions.some((question, idx) => !responseMap.has(`${section.section_id}::${getQuestionId(section, question, idx)}`));
   });
-  if (firstUnansweredIdx >= 0) activeSectionIndex = firstUnansweredIdx;
+  if (responses.length > 0 && firstUnansweredIdx >= 0) activeSectionIndex = firstUnansweredIdx;
 
   const drawSection = () => {
     const section = sectionsSorted[activeSectionIndex];
@@ -1121,7 +1119,7 @@ async function renderCombinedSectionModule(step, sections, moduleStepCount) {
     card.className = "step-card module-card";
 
     const title = document.createElement("h3");
-    title.textContent = step?.moduleTitle || section.title || "מודול";
+    title.textContent = section.__moduleTitle || step?.moduleTitle || "מודול";
     card.appendChild(title);
 
     const sectionTitle = document.createElement("h4");
@@ -1249,7 +1247,7 @@ async function renderCombinedSectionModule(step, sections, moduleStepCount) {
     nextBtn.type = "button";
     nextBtn.className = "ghost-button";
     const isLast = activeSectionIndex === sectionsSorted.length - 1;
-    nextBtn.textContent = isLast ? "סיום המודול" : "הבא";
+    nextBtn.textContent = isLast ? "המשך לשלב הבא" : "הבא";
 
     const hasPendingQuestions = questions.some(
       (question, idx) => !responseMap.has(`${section.section_id}::${getQuestionId(section, question, idx)}`)
@@ -1302,7 +1300,7 @@ async function renderSectionModule(step, moduleDef) {
     const questions = section.questions || [];
     return questions.some((question, idx) => !responseMap.has(`${section.section_id}::${getQuestionId(section, question, idx)}`));
   });
-  if (firstUnansweredIdx >= 0) activeSectionIndex = firstUnansweredIdx;
+  if (responses.length > 0 && firstUnansweredIdx >= 0) activeSectionIndex = firstUnansweredIdx;
 
   const drawSection = () => {
     const section = sections[activeSectionIndex];
@@ -1439,7 +1437,7 @@ async function renderSectionModule(step, moduleDef) {
     nextBtn.type = "button";
     nextBtn.className = "ghost-button";
     const isLast = activeSectionIndex === sections.length - 1;
-    nextBtn.textContent = isLast ? "סיום המודול" : "הבא";
+    nextBtn.textContent = isLast ? "המשך לשלב הבא" : "הבא";
 
     const hasPendingQuestions = questions.some(
       (question, idx) => !responseMap.has(`${section.section_id}::${getQuestionId(section, question, idx)}`)
@@ -1596,7 +1594,7 @@ function drawLegacyModulePage() {
   const nextBtn = document.createElement("button");
   nextBtn.className = "ghost-button";
   const isLast = lastChapter && lastPageInChapter;
-  nextBtn.textContent = isLast ? "סיום המודול" : "הבא";
+  nextBtn.textContent = isLast ? "המשך לשלב הבא" : "הבא";
   if (page.type === "quiz" && !moduleState.answered) {
     nextBtn.disabled = true;
   }
