@@ -776,7 +776,7 @@ async function renderChat(step) {
   backgroundCard.className = "persona-background";
   const backgroundTitle = document.createElement("div");
   backgroundTitle.className = "persona-background-title";
-  backgroundTitle.textContent = "רקע קצר";
+  backgroundTitle.textContent = "רקע";
   const backgroundBody = document.createElement("div");
   backgroundBody.className = "persona-background-body";
   const personaBackground = persona.background_ui || persona.background || "";

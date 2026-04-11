@@ -63,6 +63,8 @@ const CHAT_DURATION_MS = CHAT_DURATION_MINUTES * 60 * 1000;
 const CONSENT_LOCK_WINDOW_MS = 60 * 60 * 1000;
 const MID_PROMPT_MINUTES = 9;
 const MID_PROMPT_MS = MID_PROMPT_MINUTES * 60 * 1000;
+const CHAT_MAX_OUTPUT_TOKENS = Math.max(1, Number(process.env.OPENAI_CHAT_MAX_OUTPUT_TOKENS || 150));
+const FEEDBACK_MAX_OUTPUT_TOKENS = Math.max(1, Number(process.env.OPENAI_FEEDBACK_MAX_OUTPUT_TOKENS || 650));
 const FEEDBACK_MIN_PARTICIPANT_MESSAGES = 2;
 const FEEDBACK_FALLBACK_TEXT = "feedback could not be provided as the chat did not meet the requirements";
 const FEEDBACK_SYSTEM_BUSY_TEXT = "Feedback is delayed due to temporary system load. Please wait a moment and it will appear automatically.";
@@ -279,6 +281,7 @@ async function generateEligibleFeedback({ session, sessionPersonaId, personaReco
     model: MODEL_ID,
     conversation: conversationId,
     instructions,
+    max_output_tokens: FEEDBACK_MAX_OUTPUT_TOKENS,
     tools: [
       {
         type: "file_search",
@@ -1022,6 +1025,7 @@ app.post("/api/session/:token/message", async (req, res) => {
       model: MODEL_ID,
       conversation: conversationId,
       instructions,
+      max_output_tokens: CHAT_MAX_OUTPUT_TOKENS,
       tools: [
         {
           type: "file_search",

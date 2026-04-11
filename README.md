@@ -17,6 +17,8 @@ A minimal single-window chat UI that uses OpenAI's Conversations API to role-pla
    OPENAI_MODEL=gpt-4.1
    OPENAI_VECTOR_STORE_ID=vs_68f62cd846f48191a200e536464c0e5e
    OPENAI_FILE_ID=file-3FuXaXhpFhWnJaidwacTji
+   OPENAI_CHAT_MAX_OUTPUT_TOKENS=250
+   OPENAI_FEEDBACK_MAX_OUTPUT_TOKENS=1000
    PORT=3000
    ```
 
