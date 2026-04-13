@@ -9,6 +9,7 @@
           "label": "מפגש ראשון",
           "steps": [
             { "type": "form", "key": "consent" },
+            { "type": "form", "key": "confidentiality_request" },
             { "type": "form", "key": "demographics" },
             { "type": "module", "key": "introduction_module" },
             { "type": "chat" }
@@ -19,6 +20,7 @@
           "label": "מפגש שני",
           "steps": [
             { "type": "form", "key": "consent" },
+            { "type": "form", "key": "confidentiality_request" },
             { "type": "chat" }
           ]
         },
@@ -27,6 +29,7 @@
           "label": "מפגש שלישי",
           "steps": [
             { "type": "form", "key": "consent" },
+            { "type": "form", "key": "confidentiality_request" },
             { "type": "chat" }
           ]
         },
@@ -35,6 +38,7 @@
           "label": "מפגש רביעי",
           "steps": [
             { "type": "form", "key": "consent" },
+            { "type": "form", "key": "confidentiality_request" },
             { "type": "chat" }
           ]
         }
@@ -48,6 +52,7 @@
           "label": "מפגש ראשון",
           "steps": [
             { "type": "form", "key": "consent" },
+            { "type": "form", "key": "confidentiality_request" },
             { "type": "form", "key": "demographics" },
             { "type": "module", "key": "introduction_module" },
             { "type": "chat" }
@@ -58,7 +63,9 @@
           "label": "מפגש שני",
           "steps": [
             { "type": "form", "key": "consent" },
-            { "type": "module", "key": "session2_introduction_module" },
+            { "type": "form", "key": "confidentiality_request" },
+            { "type": "form", "key": "pre_reading_instructions" },
+            { "type": "module", "key": "reading_introduction_module" },
             {
               "type": "module",
               "keySource": "reading_order",
@@ -75,6 +82,9 @@
           "label": "מפגש שלישי",
           "steps": [
             { "type": "form", "key": "consent" },
+            { "type": "form", "key": "confidentiality_request" },
+            { "type": "form", "key": "pre_reading_instructions" },
+            { "type": "module", "key": "reading_introduction_module" },
             {
               "type": "module",
               "keySource": "reading_order",
@@ -91,6 +101,7 @@
           "label": "מפגש רביעי",
           "steps": [
             { "type": "form", "key": "consent" },
+            { "type": "form", "key": "confidentiality_request" },
             { "type": "chat" }
           ]
         }

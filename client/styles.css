@@ -398,6 +398,37 @@ body {
 .form-status.error {
   color: #c62828;
 }
+
+.form-paragraph {
+  margin: 0 0 10px;
+  line-height: 1.45;
+  white-space: pre-line;
+}
+
+.image-only-card {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 420px;
+}
+
+.form-image-screen {
+  width: 100%;
+  max-width: 760px;
+  max-height: 72vh;
+  object-fit: contain;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: #fff;
+}
+
+.mobile-block-card {
+  max-width: 640px;
+  margin-inline: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
 .step-card h3 {
   margin: 0 0 6px 0;
   font-weight: 600;
@@ -471,14 +502,14 @@ body {
   flex-direction: column-reverse;
   align-items: center; /* center children horizontally */
   margin: 25px auto;
-  width: 150%;
+  width: 100%;
   max-width: 560px; /* constrain width so slider and labels are centered */
   padding: 0;
   box-sizing: border-box;
 }
 
 .likert-slider {
-  width: 120%;
+  width: 100%;
   margin: 10px 0 0 0;
   cursor: pointer;
   display: block;
@@ -493,10 +524,10 @@ body {
   text-align: center;
   /* Position labels directly above the slider */
   margin-bottom: 4px;
-  width: 150%;
+  width: 125%;
   box-sizing: border-box;
   /* Add slight side padding to the grid to match the slider's internal track padding */
-  padding: 0 8px;
+  padding: 0 2px;
 }
 
 /* Adjust grid columns dynamically if scale is not 1-5 */
@@ -964,6 +995,13 @@ body {
   color: #1d6f3a;
 }
 
+@media (max-width: 1024px) {
+  .app-shell {
+    width: min(860px, 96vw);
+    padding: 24px;
+  }
+}
+
 @media (max-width: 640px) {
   body {
     padding: 16px 0;
@@ -977,6 +1015,10 @@ body {
 
   .layout {
     grid-template-columns: 1fr;
+  }
+
+  .form-image-screen {
+    max-height: 62vh;
   }
 
   #message-input {

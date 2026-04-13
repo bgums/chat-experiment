@@ -21,6 +21,7 @@ let chatLocked = false;
 let midPrimeTimeout = null;
 let activeFormController = null;
 let feedbackRenderCounter = 0;
+let mobileOverrideAuthorized = false;
 
 let moduleState = null;
 // Persist nextBtnRef across renders to avoid ReferenceError
@@ -313,6 +314,18 @@ function renderForm(formDef, step = {}, savedResponses = {}) {
   const wrapper = document.createElement("div");
   wrapper.classList.add("step-card");
 
+  if (formDef.imageOnly && formDef.imageSrc) {
+    wrapper.classList.add("image-only-card");
+    const image = document.createElement("img");
+    image.className = "form-image-screen";
+    image.src = formDef.imageSrc;
+    image.alt = formDef.imageAlt || formDef.title || "Form image";
+    wrapper.appendChild(image);
+    stepContainer.innerHTML = "";
+    stepContainer.appendChild(wrapper);
+    return;
+  }
+
   const title = document.createElement("h3");
   title.textContent = formDef.title || formDef.key;
   wrapper.appendChild(title);
@@ -325,11 +338,19 @@ function renderForm(formDef, step = {}, savedResponses = {}) {
   }
 
   if (formDef.intro) {
-  // Attach event listeners
     const intro = document.createElement("p");
     intro.classList.add("muted");
     intro.textContent = formDef.intro;
     wrapper.appendChild(intro);
+  }
+
+  if (Array.isArray(formDef.paragraphs)) {
+    formDef.paragraphs.forEach((text) => {
+      const paragraph = document.createElement("p");
+      paragraph.classList.add("form-paragraph");
+      paragraph.textContent = text;
+      wrapper.appendChild(paragraph);
+    });
   }
 
   const formEl = document.createElement("form");
@@ -1105,12 +1126,21 @@ async function renderCombinedSectionModule(step, sections, moduleStepCount) {
 
   const sectionsSorted = [...sections];
 
+  // Detect if this page load was a reload. On a reload we want to start
+  // participants at the first screen so they must navigate back manually.
+  const navEntries = (performance && typeof performance.getEntriesByType === "function")
+    ? performance.getEntriesByType("navigation")
+    : null;
+  const isReload = (navEntries && navEntries[0] && navEntries[0].type === "reload") ||
+    (performance && performance.navigation && performance.navigation.type === 1);
+
   let activeSectionIndex = 0;
   const firstUnansweredIdx = sectionsSorted.findIndex((section) => {
     const questions = section.questions || [];
     return questions.some((question, idx) => !responseMap.has(`${section.section_id}::${getQuestionId(section, question, idx)}`));
   });
-  if (responses.length > 0 && firstUnansweredIdx >= 0) activeSectionIndex = firstUnansweredIdx;
+  // Only resume to the first-unanswered when this is not a page reload
+  if (!isReload && responses.length > 0 && firstUnansweredIdx >= 0) activeSectionIndex = firstUnansweredIdx;
 
   const drawSection = () => {
     const section = sectionsSorted[activeSectionIndex];
@@ -1295,12 +1325,20 @@ async function renderSectionModule(step, moduleDef) {
     return;
   }
 
+  // Detect page reload and, if so, force start at the first section so the
+  // participant must navigate back to their prior position manually.
+  const navEntries = (performance && typeof performance.getEntriesByType === "function")
+    ? performance.getEntriesByType("navigation")
+    : null;
+  const isReload = (navEntries && navEntries[0] && navEntries[0].type === "reload") ||
+    (performance && performance.navigation && performance.navigation.type === 1);
+
   let activeSectionIndex = 0;
   const firstUnansweredIdx = sections.findIndex((section) => {
     const questions = section.questions || [];
     return questions.some((question, idx) => !responseMap.has(`${section.section_id}::${getQuestionId(section, question, idx)}`));
   });
-  if (responses.length > 0 && firstUnansweredIdx >= 0) activeSectionIndex = firstUnansweredIdx;
+  if (!isReload && responses.length > 0 && firstUnansweredIdx >= 0) activeSectionIndex = firstUnansweredIdx;
 
   const drawSection = () => {
     const section = sections[activeSectionIndex];
@@ -1748,10 +1786,87 @@ async function sendChatMessage(userMessage, step) {
   }
 }
 
+function isSmartphoneDevice() {
+  const ua = String(navigator.userAgent || "").toLowerCase();
+  const phonePattern = /(iphone|ipod|windows phone|iemobile|opera mini|blackberry|bb10|webos|android.+mobile)/i;
+  const looksLikePhone = phonePattern.test(ua);
+  const narrowViewport = window.matchMedia("(max-width: 820px)").matches;
+  const coarsePointer = window.matchMedia("(pointer: coarse)").matches;
+  const explicitTablet = /(ipad|tablet)/i.test(ua);
+  return looksLikePhone || (coarsePointer && narrowViewport && !explicitTablet);
+}
+
+async function verifyAdminCredentials(username, password) {
+  const basic = btoa(`${username}:${password}`);
+  const response = await fetch("/api/admin/session-options", {
+    headers: {
+      Authorization: `Basic ${basic}`
+    }
+  });
+  return response.ok;
+}
+
+function renderSmartphoneBlockedScreen() {
+  const wrapper = document.createElement("div");
+  wrapper.className = "step-card mobile-block-card";
+
+  const title = document.createElement("h3");
+  title.textContent = "פתיחת האתר בסמארטפון אינה מותרת";
+  wrapper.appendChild(title);
+
+  const message = document.createElement("p");
+  message.className = "muted";
+  message.textContent = "יש לפתוח את האתר ממחשב או טאבלט. מנהל יכול להמשיך בכל זאת באמצעות שם משתמש וסיסמה.";
+  wrapper.appendChild(message);
+
+  const adminBtn = document.createElement("button");
+  adminBtn.type = "button";
+  adminBtn.className = "ghost-button";
+  adminBtn.textContent = "כניסת מנהל";
+
+  adminBtn.addEventListener("click", async () => {
+    const username = window.prompt("שם משתמש מנהל:", "");
+    if (!username) return;
+    const password = window.prompt("סיסמת מנהל:", "");
+    if (!password) return;
+
+    adminBtn.disabled = true;
+    adminBtn.textContent = "בודק...";
+    try {
+      const ok = await verifyAdminCredentials(username, password);
+      if (!ok) {
+        message.textContent = "פרטי מנהל שגויים. נסו שוב או היכנסו ממחשב/טאבלט.";
+      } else {
+        mobileOverrideAuthorized = true;
+        message.textContent = "הזדהות מנהל הצליחה. טוען את המפגש...";
+        loadSession();
+        return;
+      }
+    } catch (error) {
+      message.textContent = "בדיקת ההרשאה נכשלה. נסו שוב.";
+    } finally {
+      adminBtn.disabled = false;
+      adminBtn.textContent = "כניסת מנהל";
+    }
+  });
+
+  wrapper.appendChild(adminBtn);
+  stepContainer.innerHTML = "";
+  stepContainer.appendChild(wrapper);
+}
+
 // Removed top-level event listeners for chatForm and messageInput. Now attached dynamically in renderChat.
  
 function initialize() {
   participantPanel.hidden = false;
+
+  if (isSmartphoneDevice() && !mobileOverrideAuthorized) {
+    renderSmartphoneBlockedScreen();
+    if (sessionLabel) {
+      sessionLabel.textContent = "מכשיר לא נתמך";
+    }
+    return;
+  }
 
   if (!state.token) {
     renderPlaceholder("קישור ייחודי נדרש כדי להתחיל.");

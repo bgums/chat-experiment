@@ -63,8 +63,8 @@ const CHAT_DURATION_MS = CHAT_DURATION_MINUTES * 60 * 1000;
 const CONSENT_LOCK_WINDOW_MS = 60 * 60 * 1000;
 const MID_PROMPT_MINUTES = 9;
 const MID_PROMPT_MS = MID_PROMPT_MINUTES * 60 * 1000;
-const CHAT_MAX_OUTPUT_TOKENS = Math.max(1, Number(process.env.OPENAI_CHAT_MAX_OUTPUT_TOKENS || 150));
-const FEEDBACK_MAX_OUTPUT_TOKENS = Math.max(1, Number(process.env.OPENAI_FEEDBACK_MAX_OUTPUT_TOKENS || 650));
+const CHAT_MAX_OUTPUT_TOKENS = Math.max(1, Number(process.env.OPENAI_CHAT_MAX_OUTPUT_TOKENS || 500));
+const FEEDBACK_MAX_OUTPUT_TOKENS = Math.max(1, Number(process.env.OPENAI_FEEDBACK_MAX_OUTPUT_TOKENS || 1500));
 const FEEDBACK_MIN_PARTICIPANT_MESSAGES = 2;
 const FEEDBACK_FALLBACK_TEXT = "feedback could not be provided as the chat did not meet the requirements";
 const FEEDBACK_SYSTEM_BUSY_TEXT = "Feedback is delayed due to temporary system load. Please wait a moment and it will appear automatically.";
@@ -589,6 +589,7 @@ app.get("/", enforceLockedSessionAdmin, (_req, res, next) => {
   next();
 });
 app.use("/api/session/:token", enforceLockedSessionAdmin);
+app.use("/forms-assets", express.static(formsDir));
 app.use(express.static(path.join(__dirname, "..", "client")));
 
 function loadFormDefinition(formKey) {
@@ -804,6 +805,7 @@ app.get("/api/session/:token", async (req, res) => {
     await markSessionStarted(session.sessionId);
     await maybeMarkSessionCompleted(session);
 
+    const includeFeedbackSteps = session.groupAssignment === "experimental";
     const personaSteps = (persistedPersonas || []).flatMap((personaRow) => {
       const personaData = withPersonaDisplay(personaRow.personaJson);
       const personaMeta = {
@@ -823,12 +825,17 @@ app.get("/api/session/:token", async (req, res) => {
           style_of_expression: personaData.style_of_expression || ""
         }
       };
-      return [
+      const steps = [
         { type: "chat", kind: "persona", order: personaRow.personaOrder, ...personaMeta },
-        { type: "form", key: "post_chat", kind: "post_chat", order: personaRow.personaOrder + 0.25, ...personaMeta },
-        { type: "feedback", kind: "persona_feedback", order: personaRow.personaOrder + 0.5, ...personaMeta },
-        { type: "form", key: "post_feedback", kind: "post_feedback", order: personaRow.personaOrder + 0.75, ...personaMeta }
+        { type: "form", key: "post_chat", kind: "post_chat", order: personaRow.personaOrder + 0.25, ...personaMeta }
       ];
+      if (includeFeedbackSteps) {
+        steps.push(
+          { type: "feedback", kind: "persona_feedback", order: personaRow.personaOrder + 0.5, ...personaMeta },
+          { type: "form", key: "post_feedback", kind: "post_feedback", order: personaRow.personaOrder + 0.75, ...personaMeta }
+        );
+      }
+      return steps;
     });
 
     const nonChatSteps = configuredSteps
@@ -873,7 +880,9 @@ app.post("/api/session/:token/forms/:formKey", async (req, res) => {
 
     const steps = getSessionSteps(session);
     const requestedSessionPersonaId = req.body?.sessionPersonaId ? Number(req.body.sessionPersonaId) : null;
-    const personaFormKeys = new Set(["post_chat", "post_feedback"]);
+    const personaFormKeys = session.groupAssignment === "experimental"
+      ? new Set(["post_chat", "post_feedback"])
+      : new Set(["post_chat"]);
 
     let allowed = steps.some((step) => step.type === "form" && step.key === formKey);
     if (!allowed && personaFormKeys.has(formKey)) {
@@ -917,7 +926,9 @@ app.get("/api/session/:token/forms/:formKey", async (req, res) => {
     }
 
     const steps = getSessionSteps(session);
-    const personaFormKeys = new Set(["post_chat", "post_feedback"]);
+    const personaFormKeys = session.groupAssignment === "experimental"
+      ? new Set(["post_chat", "post_feedback"])
+      : new Set(["post_chat"]);
 
     let allowed = steps.some((step) => step.type === "form" && step.key === formKey);
     if (!allowed && personaFormKeys.has(formKey)) {
@@ -1271,6 +1282,9 @@ app.post("/api/session/:token/persona/:sessionPersonaId/feedback", async (req, r
     const session = await getSessionByToken(token);
     if (!session) {
       return res.status(404).json({ error: "Session not found." });
+    }
+    if (session.groupAssignment !== "experimental") {
+      return res.status(400).json({ error: "Feedback is not part of this session flow." });
     }
 
     const personaRecord = await getSessionPersona(Number(sessionPersonaId));
