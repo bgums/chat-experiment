@@ -682,9 +682,16 @@ app.use("/api/admin", adminAuth);
 app.post("/api/admin/invite", async (req, res) => {
   try {
     const groupAssignment = req.body?.groupAssignment === "control" ? "control" : "experimental";
-    const readingOrder = req.body?.readingOrder === "confrontation_first"
-      ? "confrontation_first"
-      : "withdrawal_first";
+    let readingOrder;
+    // Randomize reading order for the control group so withdrawal/confrontation
+    // assignments vary across participants in the control arm.
+    if (groupAssignment === "control") {
+      readingOrder = Math.random() < 0.5 ? "withdrawal_first" : "confrontation_first";
+    } else {
+      readingOrder = req.body?.readingOrder === "confrontation_first"
+        ? "confrontation_first"
+        : "withdrawal_first";
+    }
     const invite = await createInvite({ groupAssignment, readingOrder });
 
     const participantSessions = await listSessionsByParticipant(invite.participantId);

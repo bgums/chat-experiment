@@ -417,6 +417,41 @@ export function saveFormResponse({ participantId, sessionNumber, formKey, respon
   const db = getDb();
   const payload = JSON.stringify(responses ?? {});
   return new Promise((resolve, reject) => {
+    // For the consent form we want to preserve the original completion timestamp.
+    // If a consent response already exists for this participant/session (and persona if provided),
+    // update the stored responses JSON but keep the original created_at. For other forms,
+    // continue to replace prior responses as before.
+    if (String(formKey) === "consent") {
+      const selectSql = `SELECT id FROM form_responses WHERE participant_id = ? AND session_number = ? AND form_key = 'consent' AND IFNULL(session_persona_id, -1) = IFNULL(?, -1) LIMIT 1`;
+      db.get(selectSql, [participantId, sessionNumber, sessionPersonaId], (getErr, row) => {
+        if (getErr) return reject(getErr);
+        if (row && row.id) {
+          // Update responses but keep created_at untouched
+          db.run(
+            "UPDATE form_responses SET responses_json = ? WHERE id = ?",
+            [payload, row.id],
+            function onUpdate(err) {
+              if (err) return reject(err);
+              resolve(row.id);
+            }
+          );
+          return;
+        }
+
+        // No existing consent row: insert new record
+        db.run(
+          "INSERT INTO form_responses (participant_id, session_number, form_key, responses_json, session_persona_id) VALUES (?, ?, 'consent', ?, ?)",
+          [participantId, sessionNumber, payload, sessionPersonaId],
+          function onInsert(err) {
+            if (err) return reject(err);
+            resolve(this.lastID);
+          }
+        );
+      });
+      return;
+    }
+
+    // Default behavior for non-consent forms: replace any existing response for this key
     const deleteSql = `DELETE FROM form_responses WHERE participant_id = ? AND session_number = ? AND form_key = ? AND IFNULL(session_persona_id, -1) = IFNULL(?, -1)`;
     db.serialize(() => {
       db.run(deleteSql, [participantId, sessionNumber, formKey, sessionPersonaId], (delErr) => {

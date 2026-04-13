@@ -1,7 +1,6 @@
 const subjectsPanel = document.getElementById("subjects-panel");
 const problemsPanel = document.getElementById("problems-panel");
 const groupSelect = document.getElementById("group-select");
-const readingOrderSelect = document.getElementById("reading-order-select");
 const createParticipantForm = document.getElementById("create-participant-form");
 const resetSessionForm = document.getElementById("reset-session-form");
 const resetSessionTokenInput = document.getElementById("reset-session-token");
@@ -103,6 +102,20 @@ function renderSubjectsPanel() {
     const sessions = (participant.sessions || []).slice().sort((a, b) => a.sessionNumber - b.sessionNumber);
     sessions.forEach((session, idx) => {
       const status = computeStatus(session);
+      // Determine what to display in the Personas column. If personas exist, show them.
+      // For control-group sessions that host the reading modules (sessions 2 and 3),
+      // show which half (Withdrawal/Confrontation) that session contains when there
+      // are no personas to display.
+      let personaDisplay = "-";
+      if (session.personaNames) {
+        personaDisplay = normalizePersonaNames(session.personaNames);
+      } else if (participant.groupAssignment === "control" && (Number(session.sessionNumber) === 2 || Number(session.sessionNumber) === 3)) {
+        const reading = participant.readingOrder || "withdrawal_first";
+        const firstHalf = reading === "withdrawal_first" ? "withdrawal" : "confrontation";
+        const half = Number(session.sessionNumber) === 2 ? firstHalf : (firstHalf === "withdrawal" ? "confrontation" : "withdrawal");
+        personaDisplay = `${half.charAt(0).toUpperCase() + half.slice(1)}`;
+      }
+
       rows.push(`
         <tr>
           ${idx === 0 ? `<td rowspan="${sessions.length}"><a href="#" class="id-link participant-link" data-code="${escapeHtml(participant.participantCode)}">${escapeHtml(participant.participantCode)}</a><div class="small-muted">id: ${escapeHtml(participant.id)}</div></td>` : ""}
@@ -110,7 +123,7 @@ function renderSubjectsPanel() {
           <td>${escapeHtml(session.sessionNumber)}</td>
           <td>${escapeHtml(formatDateTime(session.consentCompletedAt))}</td>
           <td>${renderStatus(status)}</td>
-          <td>${escapeHtml(normalizePersonaNames(session.personaNames) || "-")}</td>
+          <td>${escapeHtml(personaDisplay || "-")}</td>
           <td>${session.token ? `<a href="/?token=${encodeURIComponent(session.token)}" target="_blank" rel="noopener">פתח</a>` : ""}</td>
         </tr>
       `);
@@ -507,12 +520,11 @@ async function resetSessionByToken(token) {
 }
 
 async function loadSessionOptions() {
-  if (!groupSelect || !readingOrderSelect) return;
+  if (!groupSelect) return;
   const response = await fetch("/api/admin/session-options");
   if (!response.ok) return;
   const data = await response.json();
   groupSelect.innerHTML = (data.groups || []).map((group) => `<option value="${group.key}">${group.label}</option>`).join("");
-  readingOrderSelect.innerHTML = (data.readingOrders || []).map((order) => `<option value="${order.key}">${order.label}</option>`).join("");
 }
 
 async function refreshAllPanels() {
@@ -529,13 +541,10 @@ createParticipantForm?.addEventListener("submit", async (event) => {
   setManagementMessage("יוצר משתתף חדש...");
   try {
     const groupAssignment = groupSelect?.value === "control" ? "control" : "experimental";
-    const readingOrder = readingOrderSelect?.value === "confrontation_first"
-      ? "confrontation_first"
-      : "withdrawal_first";
     const response = await fetch("/api/admin/invite", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ groupAssignment, readingOrder })
+      body: JSON.stringify({ groupAssignment })
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload?.error || "שגיאה ביצירת משתתף.");
