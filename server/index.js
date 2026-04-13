@@ -687,6 +687,17 @@ app.post("/api/admin/invite", async (req, res) => {
       : "withdrawal_first";
     const invite = await createInvite({ groupAssignment, readingOrder });
 
+    const participantSessions = await listSessionsByParticipant(invite.participantId);
+    for (const participantSession of participantSessions) {
+      await ensureSessionPersonas({
+        sessionId: participantSession.sessionId,
+        participantId: invite.participantId,
+        sessionNumber: participantSession.sessionNumber,
+        participantCode: invite.participantCode,
+        groupAssignment
+      });
+    }
+
     const origin = req.get("origin") || `${req.protocol}://${req.get("host")}`;
     const sessions = invite.sessionTokens.map(({ sessionNumber, token }) => ({
       sessionNumber,
@@ -739,7 +750,8 @@ app.get("/api/admin/participants", async (_req, res) => {
           sessionId: session.sessionId,
           participantId: participant.id,
           sessionNumber: session.sessionNumber,
-          participantCode: participant.participantCode
+          participantCode: participant.participantCode,
+          groupAssignment: participant.groupAssignment
         });
       }
     }
@@ -970,7 +982,8 @@ app.get("/api/session/:token", async (req, res) => {
         sessionId: session.sessionId,
         participantId: session.participantId,
         sessionNumber: session.sessionNumber,
-        participantCode: session.participantCode
+        participantCode: session.participantCode,
+        groupAssignment: session.groupAssignment
       });
       persistedPersonas = await getSessionPersonas(session.sessionId);
     }
@@ -1234,21 +1247,27 @@ app.post("/api/session/:token/message", async (req, res) => {
       await markSessionPersonaMidPromptSent(sessionPersonaId);
     }
 
+    // save user message with the timestamp recorded when request was received
     await savePersonaMessage({
       participantId: session.participantId,
       sessionNumber: session.sessionNumber,
       role: "user",
       content: message,
       sessionPersonaId,
-      conversationId
+      conversationId,
+      timestampIso: isoNow
     });
+
+    // save assistant message with a timestamp captured after response generation
+    const assistantTimestamp = new Date().toISOString();
     await savePersonaMessage({
       participantId: session.participantId,
       sessionNumber: session.sessionNumber,
       role: "assistant",
       content: assistantText,
       sessionPersonaId,
-      conversationId
+      conversationId,
+      timestampIso: assistantTimestamp
     });
 
     return res.json({

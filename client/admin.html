@@ -16,35 +16,34 @@
       <div>
         <p class="eyebrow">ממשק מנהל</p>
         <h1>Admin Panel</h1>
-        <p class="admin-subtitle">ניהול משתתפים, ניטור מפגשים, צפייה בתוכן צ'אטים וניתוח איכות.</p>
       </div>
       <div class="pill">גישה מאובטחת</div>
     </header>
 
     <main class="admin-grid">
-      <section class="panel-card">
-        <div>
+      <details class="panel-card" open>
+        <summary>
           <h2>Subjects Panel</h2>
-          <p>Participant ID, שורות מפגשים, זמן התחלה (Consent), סטטוס, פרסונות וקישור מפגש.</p>
+        </summary>
+        <div class="panel-content">
+          <div class="subjects-wrap" id="subjects-panel"></div>
         </div>
-        <div class="subjects-wrap" id="subjects-panel"></div>
-      </section>
+      </details>
 
-      <section class="two-col">
-        <section class="panel-card">
-          <div>
-            <h2>Problem Panel</h2>
-            <p>כל המפגשים הבלתי-שלמים (אחרי שעה מהסכמה).</p>
-          </div>
+      <details class="panel-card">
+        <summary>
+          <h2>Problem Panel</h2>
+        </summary>
+        <div class="panel-content">
           <div class="subjects-wrap" id="problems-panel"></div>
-        </section>
+        </div>
+      </details>
 
-        <section class="panel-card">
-          <div>
-            <h2>Management Panel</h2>
-            <p>יצירת משתתפים, איפוס מפגש, ומחיקת משתתפים.</p>
-          </div>
-
+      <details class="panel-card">
+        <summary>
+          <h2>Management Panel</h2>
+        </summary>
+        <div class="panel-content">
           <form id="create-participant-form" class="admin-form">
             <select id="group-select" name="groupAssignment"></select>
             <select id="reading-order-select" name="readingOrder"></select>
@@ -62,14 +61,13 @@
           </form>
 
           <div id="management-result" class="small-muted"></div>
-        </section>
+        </div>
+      </details>
 
-        <section class="panel-card">
+      <details class="panel-card">
+        <summary>
+          <h2>QA Panel</h2>
           <div class="inline-actions">
-            <div>
-              <h2>QA Panel</h2>
-              <p>Session per persona ו-Persona per session עם סינון קבוצה.</p>
-            </div>
             <select id="qa-group-filter">
               <option value="all">all</option>
               <option value="experimental">experimental</option>
@@ -77,14 +75,15 @@
             </select>
             <button class="tiny-btn" id="qa-refresh">רענן QA</button>
           </div>
-
+        </summary>
+        <div class="panel-content">
           <h3>Session per persona</h3>
           <div class="chart-grid" id="qa-session-per-persona"></div>
 
           <h3>Persona per session</h3>
           <div class="chart-grid" id="qa-persona-per-session"></div>
-        </section>
-      </section>
+        </div>
+      </details>
     </main>
 
     <div class="modal" id="participant-modal" hidden>

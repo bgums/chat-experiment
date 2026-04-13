@@ -398,12 +398,13 @@ export function markSessionCompleted(sessionId) {
   });
 }
 
-export function savePersonaMessage({ participantId, sessionNumber, role, content, sessionPersonaId, conversationId }) {
+export function savePersonaMessage({ participantId, sessionNumber, role, content, sessionPersonaId, conversationId, timestampIso = null }) {
   const db = getDb();
+  const createdAt = timestampIso || new Date().toISOString();
   return new Promise((resolve, reject) => {
     db.run(
-      "INSERT INTO messages (participant_id, session_number, role, content, session_persona_id, conversation_id) VALUES (?, ?, ?, ?, ?, ?)",
-      [participantId, sessionNumber, role, content, sessionPersonaId || null, conversationId || null],
+      "INSERT INTO messages (participant_id, session_number, role, content, session_persona_id, conversation_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [participantId, sessionNumber, role, content, sessionPersonaId || null, conversationId || null, createdAt],
       function onInsert(err) {
         if (err) return reject(err);
         resolve(this.lastID);

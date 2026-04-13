@@ -235,8 +235,35 @@ function renderSplitPieCharts(container, items, keyLabel, keyValue) {
     return;
   }
 
-  const blocks = Object.entries(items).map(([key]) => {
-    const safe = `chart_${keyLabel}_${String(key).replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+  const entries = Object.entries(items);
+  // Build a unified session->color mapping when the values represent sessions.
+  let sessionColorMap = null;
+  let unifiedLegendHtml = "";
+  if (keyValue === "session") {
+    const sessionSet = new Set();
+    entries.forEach(([, values]) => {
+      (values || []).forEach((entry) => {
+        if (entry && entry.sessionNumber !== undefined && entry.sessionNumber !== null) {
+          sessionSet.add(String(entry.sessionNumber));
+        }
+      });
+    });
+    const sessions = Array.from(sessionSet).map((s) => Number(s)).filter((n) => !Number.isNaN(n)).sort((a, b) => a - b);
+    const sessionPalette = getCategoryPalette(Math.max(1, sessions.length));
+    sessionColorMap = {};
+    sessions.forEach((s, idx) => {
+      sessionColorMap[String(s)] = sessionPalette[idx % sessionPalette.length];
+    });
+    const legendItems = sessions.map((s) => {
+      const color = sessionColorMap[String(s)];
+      return `<span class="legend-item" style="margin-right:8px;display:inline-flex;align-items:center;"><span style="width:12px;height:12px;background:${escapeHtml(color)};display:inline-block;margin-right:6px;border-radius:2px;border:1px solid rgba(0,0,0,0.06);"></span>Session ${escapeHtml(String(s))}</span>`;
+    }).join("");
+    unifiedLegendHtml = `<div class="chart-legend unified-legend" style="margin-bottom:8px">${legendItems}</div>`;
+  }
+
+  const blocks = entries.map(([key], idx) => {
+    // include the index to avoid collisions when keys contain non-latin characters
+    const safe = `chart_${keyLabel}_${idx}_${String(key).replace(/[^a-zA-Z0-9_-]/g, "_")}`;
     return `
       <div class="chart-card">
         <h4>${escapeHtml(keyLabel === "persona" ? key : `Session ${key}`)}</h4>
@@ -245,33 +272,44 @@ function renderSplitPieCharts(container, items, keyLabel, keyValue) {
     `;
   }).join("");
 
-  container.innerHTML = blocks;
+  container.innerHTML = (unifiedLegendHtml || "") + blocks;
 
-  Object.entries(items).forEach(([key, values]) => {
-    const safe = `chart_${keyLabel}_${String(key).replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+  entries.forEach(([key, values], idx) => {
+    const safe = `chart_${keyLabel}_${idx}_${String(key).replace(/[^a-zA-Z0-9_-]/g, "_")}`;
     const canvas = document.getElementById(safe);
     if (!canvas || !window.Chart) return;
 
-    const palette = getCategoryPalette(values.length);
     const labels = [];
     const data = [];
     const colors = [];
 
-    values.forEach((entry, idx) => {
-      const categoryLabel = keyValue === "session"
-        ? `Session ${entry.sessionNumber}`
-        : entry.personaName;
-      const completedCount = Number(entry.completedCount) || 0;
-      const openCount = Number(entry.openCount) || 0;
+    // For session-per-persona charts (where values are sessions), use the unified session colors
+    if (keyValue === "session") {
+      values.forEach((entry) => {
+        const sessionNum = String(entry.sessionNumber);
+        const paletteColor = (sessionColorMap && sessionColorMap[sessionNum]) || getCategoryPalette(values.length)[0];
+        const completedCount = Number(entry.completedCount) || 0;
+        const openCount = Number(entry.openCount) || 0;
 
-      labels.push(`${categoryLabel} completed`);
-      data.push(completedCount);
-      colors.push(palette[idx]);
+        labels.push(`Session ${entry.sessionNumber} completed`);
+        data.push(completedCount);
+        colors.push(paletteColor);
 
-      labels.push(`${categoryLabel} open`);
-      data.push(openCount);
-      colors.push(tint(palette[idx], 0.45));
-    });
+        labels.push(`Session ${entry.sessionNumber} open`);
+        data.push(openCount);
+        colors.push(tint(paletteColor, 0.45));
+      });
+    } else {
+      // For session charts (where values are personas), keep a per-chart palette
+      const palette = getCategoryPalette(values.length);
+      values.forEach((entry, vidx) => {
+        const personaLabel = entry.personaName || `Persona ${vidx + 1}`;
+        const totalCount = Number(entry.count) || (Number(entry.completedCount) || 0) + (Number(entry.openCount) || 0);
+        labels.push(personaLabel);
+        data.push(totalCount);
+        colors.push(palette[vidx]);
+      });
+    }
 
     const chart = new window.Chart(canvas, {
       type: "pie",
@@ -283,6 +321,7 @@ function renderSplitPieCharts(container, items, keyLabel, keyValue) {
         responsive: true,
         plugins: {
           legend: {
+            display: !(keyValue === "session"),
             position: "bottom",
             labels: { boxWidth: 12 }
           }

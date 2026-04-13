@@ -4,7 +4,8 @@ import { fileURLToPath } from "url";
 import crypto from "crypto";
 import {
   createSessionPersonas,
-  getSessionPersonas
+  getSessionPersonas,
+  listSessionsByParticipant
 } from "../db.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -14,7 +15,7 @@ const personasCsvPath = path.join(__dirname, "..", "instructions", "experiment_p
 // Only keep the columns that are required for prompts or UI (normalized to lower-case)
 const PERSONA_ALLOWED_COLUMNS = new Set([
   "patient_id",
-  "session",
+  "group",
   "name",
   "age",
   "gender",
@@ -28,7 +29,8 @@ const PERSONA_ALLOWED_COLUMNS = new Set([
 
 const HEADER_ALIAS_MAP = {
   patient_id: "patient_id",
-  session: "session",
+  group: "group",
+  session: "group",
   name: "name",
   age: "age",
   gender: "gender",
@@ -59,6 +61,10 @@ export function getPersonaByPatientId(patientId) {
     all.find((p) => String(p.patient_id ?? "").trim() === needle)
     || null
   );
+}
+
+function normalizeGroupKey(value) {
+  return String(value ?? "").trim();
 }
 
 function parseCSV(text) {
@@ -171,10 +177,15 @@ function shuffle(array, seed) {
   return result;
 }
 
-export function getPersonasForSession(sessionKey) {
+export function getPersonasForGroup(groupKey) {
   const all = loadPersonasFromCsv();
-  const key = String(sessionKey ?? "").trim();
-  return all.filter((p) => String(p.session ?? "").trim() === key);
+  const key = String(groupKey ?? "").trim();
+  return all.filter((p) => normalizeGroupKey(p.group) === key);
+}
+
+// Backward-compatible alias for older imports.
+export function getPersonasForSession(sessionKey) {
+  return getPersonasForGroup(sessionKey);
 }
 
 // Return a persona object safe for rendering in the UI (hides sensitive/internal fields)
@@ -182,7 +193,7 @@ export function maskPersonaForUI(persona) {
   if (!persona) return persona;
   return {
     patient_id: persona.patient_id,
-    session: persona.session,
+    group: persona.group,
     name: persona.name,
     age: persona.age,
     background_ui: persona.background_ui ?? ""
@@ -199,19 +210,72 @@ export function getPersonaByPatientIdForUI(patientId) {
   return maskPersonaForUI(p);
 }
 
-export async function ensureSessionPersonas({ sessionId, participantId, sessionNumber, participantCode }) {
+function buildSessionGroupPlan({ allPersonas, participantSeed, participantSessions, groupAssignment }) {
+  const groupsMap = new Map();
+  allPersonas.forEach((persona) => {
+    const groupKey = normalizeGroupKey(persona.group);
+    if (!groupKey) return;
+    if (!groupsMap.has(groupKey)) groupsMap.set(groupKey, []);
+    groupsMap.get(groupKey).push(persona);
+  });
+
+  const allGroupKeys = shuffle(Array.from(groupsMap.keys()), `${participantSeed}-groups`);
+  if (!allGroupKeys.length) {
+    return new Map();
+  }
+
+  const sessionNumbers = (participantSessions || [])
+    .map((s) => Number(s.sessionNumber))
+    .filter((n) => Number.isFinite(n))
+    .sort((a, b) => a - b);
+
+  const targetSessionNumbers = groupAssignment === "control"
+    ? sessionNumbers.filter((n) => n === 1 || n === 4)
+    : sessionNumbers;
+
+  if (!targetSessionNumbers.length) {
+    return new Map();
+  }
+
+  const selectedGroupKeys = groupAssignment === "control"
+    ? allGroupKeys.slice(0, Math.max(1, Math.floor(allGroupKeys.length / 2)))
+    : allGroupKeys;
+
+  const plan = new Map(targetSessionNumbers.map((sessionNum) => [sessionNum, []]));
+  selectedGroupKeys.forEach((groupKey, idx) => {
+    const targetSessionNumber = targetSessionNumbers[idx % targetSessionNumbers.length];
+    const shuffledGroupPersonas = shuffle(groupsMap.get(groupKey) || [], `${participantSeed}-group-${groupKey}`);
+    const existing = plan.get(targetSessionNumber) || [];
+    plan.set(targetSessionNumber, [...existing, ...shuffledGroupPersonas]);
+  });
+
+  return plan;
+}
+
+export async function ensureSessionPersonas({ sessionId, participantId, sessionNumber, participantCode, groupAssignment = "experimental" }) {
   const existing = await getSessionPersonas(sessionId);
   if (existing && existing.length) return existing;
 
-  const candidates = getPersonasForSession(sessionNumber);
-  const fallbackCandidates = candidates.length ? candidates : loadPersonasFromCsv();
-  if (!fallbackCandidates.length) {
+  const allPersonas = loadPersonasFromCsv();
+  if (!allPersonas.length) {
     throw new Error("No personas found in CSV.");
   }
 
-  const seed = participantCode || `${sessionId}-${sessionNumber}`;
-  const randomized = shuffle(fallbackCandidates, seed).slice(0, 2);
-  const personas = randomized.map((p, idx) => ({
+  const participantSessions = await listSessionsByParticipant(participantId);
+  const seed = participantCode || `${participantId}`;
+  const plan = buildSessionGroupPlan({
+    allPersonas,
+    participantSeed: seed,
+    participantSessions,
+    groupAssignment
+  });
+
+  const assigned = plan.get(Number(sessionNumber)) || [];
+  if (!assigned.length) {
+    return [];
+  }
+
+  const personas = assigned.map((p, idx) => ({
     personaCsvId: Number(p.patient_id || idx + 1),
     order: idx + 1,
     name: p.name,

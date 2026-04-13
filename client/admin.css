@@ -1,13 +1,13 @@
 :root {
-  --admin-bg: radial-gradient(circle at 0% 0%, #d8ebff 0%, #c2dcfb 24%, #9ec3ef 55%, #7ca7df 100%);
-  --admin-surface: rgba(250, 253, 255, 0.93);
-  --admin-border: rgba(40, 83, 150, 0.22);
-  --admin-text: #18315c;
-  --admin-muted: #4a638a;
-  --admin-primary: #2f66bf;
-  --admin-primary-dark: #214f9a;
-  --admin-primary-soft: rgba(47, 102, 191, 0.12);
-  --admin-danger: #b33939;
+  --admin-bg: #f7fbff;
+  --admin-surface: #ffffff;
+  --admin-border: rgba(20, 40, 80, 0.06);
+  --admin-text: #10223a;
+  --admin-muted: #5b6d7a;
+  --admin-primary: #2563eb;
+  --admin-primary-dark: #1f4fc4;
+  --admin-primary-soft: rgba(37, 99, 235, 0.08);
+  --admin-danger: #c53030;
 }
 
 body,
@@ -24,13 +24,13 @@ body {
 }
 
 .admin-shell {
-  width: min(1320px, 96vw);
+  width: min(1180px, 96vw);
   margin: 0 auto;
-  padding: 28px;
-  border-radius: 28px;
-  background: linear-gradient(165deg, rgba(255, 255, 255, 0.95), rgba(227, 239, 255, 0.9));
+  padding: 20px;
+  border-radius: 12px;
+  background: var(--admin-surface);
   border: 1px solid var(--admin-border);
-  box-shadow: 0 28px 72px rgba(20, 49, 96, 0.26);
+  box-shadow: 0 8px 18px rgba(16, 34, 58, 0.06);
 }
 
 .admin-header {
@@ -38,8 +38,7 @@ body {
   justify-content: space-between;
   align-items: center;
   gap: 12px;
-  border-bottom: 1px solid var(--admin-border);
-  padding-bottom: 14px;
+  padding-bottom: 8px;
 }
 
 .admin-header h1 {
@@ -48,8 +47,7 @@ body {
 }
 
 .admin-subtitle {
-  margin: 6px 0 0;
-  color: var(--admin-muted);
+  display: none;
 }
 
 .pill {
@@ -61,17 +59,38 @@ body {
 }
 
 .admin-grid {
-  margin-top: 16px;
-  display: grid;
-  grid-template-columns: 2fr 1fr;
-  gap: 14px;
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .panel-card {
   border: 1px solid var(--admin-border);
-  border-radius: 16px;
-  background: linear-gradient(160deg, rgba(255, 255, 255, 0.88), rgba(232, 242, 255, 0.84));
-  padding: 14px;
+  border-radius: 10px;
+  background: var(--admin-surface);
+  padding: 0;
+  overflow: hidden;
+}
+
+details.panel-card > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  cursor: pointer;
+  list-style: none;
+}
+
+details.panel-card > summary h2 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.panel-content {
+  padding: 12px 14px 16px;
+  border-top: 1px solid var(--admin-border);
 }
 
 .panel-card h2,
@@ -87,7 +106,7 @@ body {
 .subjects-wrap {
   overflow: auto;
   max-height: 520px;
-  margin-top: 10px;
+  margin-top: 6px;
 }
 
 .admin-table {
@@ -100,7 +119,7 @@ body {
 .admin-table td {
   text-align: right;
   padding: 10px;
-  border-bottom: 1px solid rgba(31, 74, 138, 0.12);
+  border-bottom: 1px solid rgba(16, 34, 58, 0.04);
   vertical-align: top;
 }
 
@@ -151,7 +170,7 @@ body {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 10px;
+  margin-top: 8px;
 }
 
 .admin-form input,
@@ -175,7 +194,7 @@ body {
 }
 
 .admin-form button {
-  background: linear-gradient(135deg, var(--admin-primary), var(--admin-primary-dark));
+  background: var(--admin-primary);
   color: #fff;
   border: none;
   cursor: pointer;
@@ -206,7 +225,7 @@ body {
 .two-col {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 14px;
+  gap: 12px;
 }
 
 .chart-grid {
@@ -218,9 +237,9 @@ body {
 
 .chart-card {
   border: 1px solid var(--admin-border);
-  border-radius: 12px;
-  padding: 10px;
-  background: rgba(255, 255, 255, 0.94);
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--admin-surface);
 }
 
 .chart-card h4 {
@@ -249,12 +268,12 @@ body {
 
 .modal-dialog {
   position: relative;
-  width: min(1140px, 96vw);
+  width: min(1000px, 96vw);
   max-height: 88vh;
   overflow: auto;
-  border-radius: 16px;
-  padding: 14px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.97), rgba(234, 244, 255, 0.95));
+  border-radius: 12px;
+  padding: 12px;
+  background: var(--admin-surface);
   border: 1px solid var(--admin-border);
   z-index: 2;
 }
@@ -278,15 +297,15 @@ body {
 }
 
 .session-block {
-  border: 1px solid rgba(40, 83, 150, 0.2);
-  border-radius: 12px;
+  border: 1px solid rgba(16, 34, 58, 0.04);
+  border-radius: 8px;
   margin-bottom: 10px;
-  background: rgba(255, 255, 255, 0.92);
+  background: var(--admin-surface);
 }
 
 .session-block-header {
   padding: 8px 10px;
-  border-bottom: 1px solid rgba(40, 83, 150, 0.14);
+  border-bottom: 1px solid rgba(16, 34, 58, 0.04);
   font-weight: 700;
   color: var(--admin-primary-dark);
 }
