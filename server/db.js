@@ -218,9 +218,25 @@ export function listParticipants() {
       s.session_token,
       s.status AS session_status,
       s.started_at,
-      s.completed_at
+      s.completed_at,
+      consent.consent_completed_at,
+      personas.persona_names
     FROM participants p
     LEFT JOIN sessions s ON s.participant_id = p.id
+    LEFT JOIN (
+      SELECT participant_id, session_number, MAX(created_at) AS consent_completed_at
+      FROM form_responses
+      WHERE form_key = 'consent'
+      GROUP BY participant_id, session_number
+    ) consent
+      ON consent.participant_id = s.participant_id
+      AND consent.session_number = s.session_number
+    LEFT JOIN (
+      SELECT session_id, GROUP_CONCAT(persona_name, ' | ') AS persona_names
+      FROM session_personas
+      GROUP BY session_id
+    ) personas
+      ON personas.session_id = s.id
     ORDER BY p.created_at DESC, s.session_number ASC
   `;
 
@@ -256,7 +272,9 @@ export function listParticipants() {
             token: row.session_token,
             status: sessionStatus,
             startedAt: row.started_at,
-            completedAt: row.completed_at
+            completedAt: row.completed_at,
+            consentCompletedAt: row.consent_completed_at,
+            personaNames: row.persona_names || ""
           });
         }
       });
@@ -269,14 +287,30 @@ export function listParticipants() {
 export function listSessionsByParticipant(participantId) {
   const db = getDb();
   const query = `
-    SELECT id AS sessionId,
-           session_number AS sessionNumber,
-           status,
-           started_at AS startedAt,
-           completed_at AS completedAt
-    FROM sessions
-    WHERE participant_id = ?
-    ORDER BY session_number ASC
+      SELECT s.id AS sessionId,
+        s.session_number AS sessionNumber,
+        s.status AS status,
+        s.started_at AS startedAt,
+        s.completed_at AS completedAt,
+           consent.consent_completed_at AS consentCompletedAt,
+           personas.persona_names AS personaNames
+    FROM sessions s
+    LEFT JOIN (
+      SELECT participant_id, session_number, MAX(created_at) AS consent_completed_at
+      FROM form_responses
+      WHERE form_key = 'consent'
+      GROUP BY participant_id, session_number
+    ) consent
+      ON consent.participant_id = s.participant_id
+      AND consent.session_number = s.session_number
+    LEFT JOIN (
+      SELECT session_id, GROUP_CONCAT(persona_name, ' | ') AS persona_names
+      FROM session_personas
+      GROUP BY session_id
+    ) personas
+      ON personas.session_id = s.id
+    WHERE s.participant_id = ?
+    ORDER BY s.session_number ASC
   `;
 
   return new Promise((resolve, reject) => {
@@ -635,6 +669,118 @@ export function listAllFormResponses({ formKey } = {}) {
   });
 }
 
+export function listParticipantFormResponses(participantId) {
+  const db = getDb();
+  const query = `
+    SELECT fr.id,
+           fr.participant_id AS participantId,
+           fr.session_number AS sessionNumber,
+           fr.form_key AS formKey,
+           fr.responses_json AS responsesJson,
+           fr.session_persona_id AS sessionPersonaId,
+           fr.created_at AS createdAt,
+           sp.persona_name AS personaName,
+           sp.persona_csv_id AS personaCsvId
+    FROM form_responses fr
+    LEFT JOIN session_personas sp ON sp.id = fr.session_persona_id
+    WHERE fr.participant_id = ?
+    ORDER BY fr.session_number ASC, fr.created_at ASC, fr.id ASC
+  `;
+
+  return new Promise((resolve, reject) => {
+    db.all(query, [participantId], (err, rows) => {
+      if (err) return reject(err);
+      const safeRows = (rows || []).map((row) => {
+        let parsedResponses = {};
+        try {
+          parsedResponses = JSON.parse(row.responsesJson || "{}");
+        } catch (parseErr) {
+          parsedResponses = { _parse_error: parseErr.message };
+        }
+        return {
+          id: row.id,
+          participantId: row.participantId,
+          sessionNumber: row.sessionNumber,
+          formKey: row.formKey,
+          responses: parsedResponses,
+          sessionPersonaId: row.sessionPersonaId,
+          personaName: row.personaName || null,
+          personaCsvId: row.personaCsvId || null,
+          createdAt: row.createdAt
+        };
+      });
+      resolve(safeRows);
+    });
+  });
+}
+
+export function listIncompleteSessionsForAdmin() {
+  const db = getDb();
+  const query = `
+    SELECT p.id AS participantId,
+           p.participant_code AS participantCode,
+           p.group_assignment AS groupAssignment,
+           s.id AS sessionId,
+           s.session_number AS sessionNumber,
+           s.session_token AS sessionToken,
+           s.status AS sessionStatus,
+           s.completed_at AS completedAt,
+           consent.consent_completed_at AS consentCompletedAt
+    FROM sessions s
+    JOIN participants p ON p.id = s.participant_id
+    JOIN (
+      SELECT participant_id, session_number, MAX(created_at) AS consent_completed_at
+      FROM form_responses
+      WHERE form_key = 'consent'
+      GROUP BY participant_id, session_number
+    ) consent
+      ON consent.participant_id = s.participant_id
+      AND consent.session_number = s.session_number
+    WHERE s.completed_at IS NULL
+      AND s.status != 'completed'
+      AND consent.consent_completed_at < datetime('now', '-1 hour')
+    ORDER BY consent.consent_completed_at DESC
+  `;
+
+  return new Promise((resolve, reject) => {
+    db.all(query, [], (err, rows) => {
+      if (err) return reject(err);
+      resolve(rows || []);
+    });
+  });
+}
+
+export function listPersonaSessionDistribution({ groupAssignment } = {}) {
+  const db = getDb();
+  const params = [];
+  const where = [];
+  if (groupAssignment === "control" || groupAssignment === "experimental") {
+    where.push("p.group_assignment = ?");
+    params.push(groupAssignment);
+  }
+
+  const query = `
+    SELECT sp.persona_name AS personaName,
+           sp.session_number AS sessionNumber,
+        SUM(CASE WHEN s.completed_at IS NOT NULL OR s.status = 'completed' THEN 1 ELSE 0 END) AS completedCount,
+        SUM(CASE WHEN s.completed_at IS NULL AND s.status != 'completed' THEN 1 ELSE 0 END) AS openCount,
+        COUNT(*) AS appearances
+    FROM session_personas sp
+      JOIN sessions s ON s.id = sp.session_id
+    JOIN participants p ON p.id = sp.participant_id
+    ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+    GROUP BY sp.persona_name, sp.session_number
+    ORDER BY sp.persona_name ASC, sp.session_number ASC
+  `;
+
+  return new Promise((resolve, reject) => {
+    db.all(query, params, (err, rows) => {
+      if (err) return reject(err);
+      resolve(rows || []);
+    });
+  });
+}
+
 export function updateParticipantStatus(participantId, status) {
   const db = getDb();
   return new Promise((resolve, reject) => {
@@ -853,6 +999,56 @@ export function resetSessionByToken(sessionToken) {
           participantId: session.participantId,
           participantStatus
         });
+      } catch (error) {
+        try {
+          await runSql("ROLLBACK");
+        } catch (_rollbackError) {
+        }
+        reject(error);
+      }
+    });
+  });
+}
+
+export function deleteParticipantByCode(participantCode) {
+  const db = getDb();
+
+  const runSql = (sql, params = []) => new Promise((resolve, reject) => {
+    db.run(sql, params, function onRun(err) {
+      if (err) return reject(err);
+      resolve(this);
+    });
+  });
+
+  const getSql = (sql, params = []) => new Promise((resolve, reject) => {
+    db.get(sql, params, (err, row) => {
+      if (err) return reject(err);
+      resolve(row || null);
+    });
+  });
+
+  return new Promise((resolve, reject) => {
+    db.serialize(async () => {
+      try {
+        const participant = await getSql(
+          "SELECT id, participant_code AS participantCode FROM participants WHERE participant_code = ? LIMIT 1",
+          [participantCode]
+        );
+        if (!participant) {
+          resolve(null);
+          return;
+        }
+
+        await runSql("BEGIN TRANSACTION");
+        await runSql("DELETE FROM messages WHERE participant_id = ?", [participant.id]);
+        await runSql("DELETE FROM form_responses WHERE participant_id = ?", [participant.id]);
+        await runSql("DELETE FROM module_question_responses WHERE participant_id = ?", [participant.id]);
+        await runSql("DELETE FROM session_personas WHERE participant_id = ?", [participant.id]);
+        await runSql("DELETE FROM sessions WHERE participant_id = ?", [participant.id]);
+        await runSql("DELETE FROM participants WHERE id = ?", [participant.id]);
+        await runSql("COMMIT");
+
+        resolve({ id: participant.id, participantCode: participant.participantCode });
       } catch (error) {
         try {
           await runSql("ROLLBACK");

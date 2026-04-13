@@ -18,6 +18,7 @@ import {
   savePersonaMessage,
   listMessagesByParticipant,
   listAllFormResponses,
+  listParticipantFormResponses,
   listFormResponses,
   updateParticipantStatus,
   getSessionPersonas,
@@ -30,7 +31,10 @@ import {
   listMessagesBySessionPersona,
   listSessionsByParticipant,
   saveModuleQuestionResponse,
-  listModuleQuestionResponses
+  listModuleQuestionResponses,
+  listIncompleteSessionsForAdmin,
+  listPersonaSessionDistribution,
+  deleteParticipantByCode
 } from "./db.js";
 import { ensureSessionPersonas, buildPersonaPrompt } from "./utils/personaLoader.js";
 
@@ -602,6 +606,43 @@ function loadFormDefinition(formKey) {
   return JSON.parse(raw);
 }
 
+function buildFormQuestionMap(formDef) {
+  const map = new Map();
+  if (!formDef || typeof formDef !== "object") {
+    return map;
+  }
+
+  const statements = Array.isArray(formDef.statements) ? formDef.statements : [];
+  statements.forEach((statement, idx) => {
+    map.set(`statement_${idx}`, String(statement));
+  });
+
+  const items = Array.isArray(formDef.items) ? formDef.items : [];
+  items.forEach((item) => {
+    const key = String(item?.id || "").trim();
+    if (!key) return;
+    map.set(key, String(item?.prompt || key));
+  });
+
+  if (formDef.requireSignature) {
+    map.set("signature", "שם/חתימה");
+  }
+
+  if (formDef.confirmationText) {
+    map.set("confirmation", String(formDef.confirmationText));
+  }
+
+  return map;
+}
+
+function normalizeAnswerText(value) {
+  if (Array.isArray(value)) return value.join(" | ");
+  if (value && typeof value === "object") return JSON.stringify(value);
+  if (value === null || value === undefined) return "";
+  if (typeof value === "boolean") return value ? "כן" : "לא";
+  return String(value);
+}
+
 function loadModuleDefinition(moduleKey) {
   const safeKey = `${moduleKey}`.replace(/[^a-zA-Z0-9_-]/g, "");
   const modulePath = path.join(modulesDir, `${safeKey}.json`);
@@ -686,6 +727,23 @@ app.get("/api/admin/session-options", (_req, res) => {
 
 app.get("/api/admin/participants", async (_req, res) => {
   try {
+    const firstPass = await listParticipants();
+
+    for (const participant of firstPass) {
+      const sessions = participant.sessions || [];
+      for (const session of sessions) {
+        if (!session?.sessionId) continue;
+        const existingPersonas = await getSessionPersonas(session.sessionId);
+        if (existingPersonas && existingPersonas.length) continue;
+        await ensureSessionPersonas({
+          sessionId: session.sessionId,
+          participantId: participant.id,
+          sessionNumber: session.sessionNumber,
+          participantCode: participant.participantCode
+        });
+      }
+    }
+
     const participants = await listParticipants();
     res.json({ participants });
   } catch (error) {
@@ -731,6 +789,121 @@ app.get("/api/admin/participant/:participantCode/messages", async (req, res) => 
   } catch (error) {
     console.error("Failed to load messages", error);
     res.status(500).json({ error: error?.message || "Could not load messages." });
+  }
+});
+
+app.get("/api/admin/participant/:participantCode/details", async (req, res) => {
+  try {
+    const { participantCode } = req.params;
+    const participant = await getParticipantByCode(participantCode);
+    if (!participant) {
+      return res.status(404).json({ error: "Participant not found." });
+    }
+
+    const [messages, forms, sessions] = await Promise.all([
+      listMessagesByParticipant(participant.id),
+      listParticipantFormResponses(participant.id),
+      listSessionsByParticipant(participant.id)
+    ]);
+
+    const formDefCache = new Map();
+    const formsDetailed = forms.map((row) => {
+      if (!formDefCache.has(row.formKey)) {
+        formDefCache.set(row.formKey, loadFormDefinition(row.formKey));
+      }
+      const formDef = formDefCache.get(row.formKey);
+      const questionMap = buildFormQuestionMap(formDef);
+      const responseEntries = Object.entries(row.responses || {});
+      const qaPairs = responseEntries.map(([key, value]) => ({
+        key,
+        question: questionMap.get(key) || key,
+        answer: normalizeAnswerText(value)
+      }));
+
+      return {
+        formKey: row.formKey,
+        sessionNumber: row.sessionNumber,
+        sessionPersonaId: row.sessionPersonaId,
+        personaName: row.personaName,
+        personaCsvId: row.personaCsvId,
+        createdAt: row.createdAt,
+        qaPairs
+      };
+    });
+
+    return res.json({
+      participant,
+      sessions,
+      forms: formsDetailed,
+      messages
+    });
+  } catch (error) {
+    console.error("Failed to load participant details", error);
+    return res.status(500).json({ error: error?.message || "Could not load participant details." });
+  }
+});
+
+app.get("/api/admin/problems/incomplete-sessions", async (_req, res) => {
+  try {
+    const sessions = await listIncompleteSessionsForAdmin();
+    return res.json({ sessions });
+  } catch (error) {
+    console.error("Failed to load incomplete sessions", error);
+    return res.status(500).json({ error: error?.message || "Could not load incomplete sessions." });
+  }
+});
+
+app.get("/api/admin/qa/persona-distribution", async (req, res) => {
+  try {
+    const group = req.query?.group ? String(req.query.group) : "all";
+    const groupAssignment = group === "control" || group === "experimental" ? group : undefined;
+    const rows = await listPersonaSessionDistribution({ groupAssignment });
+
+    const sessionPerPersona = {};
+    const personaPerSession = {};
+    for (const row of rows) {
+      const persona = row.personaName || "Unknown";
+      const sessionNumber = Number(row.sessionNumber) || row.sessionNumber;
+      const completedCount = Number(row.completedCount) || 0;
+      const openCount = Number(row.openCount) || 0;
+      const count = Number(row.appearances) || 0;
+
+      if (!sessionPerPersona[persona]) sessionPerPersona[persona] = [];
+      sessionPerPersona[persona].push({ sessionNumber, count, completedCount, openCount });
+
+      const key = String(sessionNumber);
+      if (!personaPerSession[key]) personaPerSession[key] = [];
+      personaPerSession[key].push({ personaName: persona, count, completedCount, openCount });
+    }
+
+    return res.json({
+      filter: groupAssignment || "all",
+      rows,
+      sessionPerPersona,
+      personaPerSession
+    });
+  } catch (error) {
+    console.error("Failed to load persona QA distribution", error);
+    return res.status(500).json({ error: error?.message || "Could not load QA distribution." });
+  }
+});
+
+app.delete("/api/admin/participant/:participantCode", async (req, res) => {
+  try {
+    const participantCode = String(req.params?.participantCode || "").trim();
+    if (!participantCode) {
+      return res.status(400).json({ error: "participantCode is required." });
+    }
+
+    const deleted = await deleteParticipantByCode(participantCode);
+    if (!deleted) {
+      return res.status(404).json({ error: "Participant not found." });
+    }
+
+    return res.json({ ok: true, participantCode: deleted.participantCode });
+  } catch (error) {
+    console.error("Failed to delete participant", error);
+    return res.status(500).json({ error: error?.message || "Could not delete participant." });
   }
 });
 

@@ -6,98 +6,105 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Admin Panel</title>
   <link rel="stylesheet" href="./styles.css" />
+  <link rel="stylesheet" href="./admin.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js" defer></script>
   <script src="./admin.js" type="module" defer></script>
-  <style>
-    body { direction: rtl; }
-  </style>
 </head>
 <body>
-  <div class="app-shell">
-    <header class="app-header">
+  <div class="admin-shell">
+    <header class="admin-header">
       <div>
         <p class="eyebrow">ממשק מנהל</p>
-        <h1>פאנל מחקר</h1>
-        <p class="app-subtitle">יצירת הזמנות ומעקב אחר סטטוס משתתפים.</p>
+        <h1>Admin Panel</h1>
+        <p class="admin-subtitle">ניהול משתתפים, ניטור מפגשים, צפייה בתוכן צ'אטים וניתוח איכות.</p>
       </div>
-      <div class="session-badge">גישה מאובטחת</div>
+      <div class="pill">גישה מאובטחת</div>
     </header>
 
-    <main class="layout layout-single">
-      <section class="panel admin" id="admin-section">
-        <div class="panel-header">
-          <div>
-            <h2>ניהול משתתפים</h2>
-            <p class="muted">יצירת קישורי הזמנה ומעקב סטטוס.</p>
-          </div>
+    <main class="admin-grid">
+      <section class="panel-card">
+        <div>
+          <h2>Subjects Panel</h2>
+          <p>Participant ID, שורות מפגשים, זמן התחלה (Consent), סטטוס, פרסונות וקישור מפגש.</p>
         </div>
-
-        <form id="invite-form" class="inline-form" style="font-family: inherit;">
-          <label class="muted" for="group-select" style="font-family: inherit;">קבוצה:</label>
-          <select id="group-select" name="groupAssignment" style="font-family: inherit; font-size: 1rem; padding: 0.5em; border-radius: 6px; border: 1px solid #ccc; background: #fff; color: #222;"></select>
-          <label class="muted" for="reading-order-select" style="font-family: inherit;">סדר קריאה (ביקורת):</label>
-          <select id="reading-order-select" name="readingOrder" style="font-family: inherit; font-size: 1rem; padding: 0.5em; border-radius: 6px; border: 1px solid #ccc; background: #fff; color: #222;"></select>
-          <button type="submit" style="font-family: inherit; font-size: 1rem; padding: 0.5em 1em; border-radius: 6px; border: none; background: #2d7ff9; color: #fff; cursor: pointer;">צור הזמנה</button>
-        </form>
-
-        <div id="invite-result" class="card muted"></div>
-
-        <div class="column-toggles" id="participants-column-toggles"></div>
-
-        <div class="table" id="participants-table"></div>
+        <div class="subjects-wrap" id="subjects-panel"></div>
       </section>
 
-      <section class="panel admin" id="forms-section">
-        <div class="panel-header">
+      <section class="two-col">
+        <section class="panel-card">
           <div>
-            <h2>טפסים ונתונים</h2>
-            <p class="muted">צפייה בתשובות וייצוא ל-CSV.</p>
+            <h2>Problem Panel</h2>
+            <p>כל המפגשים הבלתי-שלמים (אחרי שעה מהסכמה).</p>
           </div>
-          <div class="button-row">
-            <button class="ghost-button" id="download-all-forms">הורד הכל (CSV)</button>
-            <button class="ghost-button" id="download-filtered-forms">הורד מסונן</button>
-          </div>
-        </div>
+          <div class="subjects-wrap" id="problems-panel"></div>
+        </section>
 
-        <div class="form-controls">
-          <label class="muted" for="form-filter">סינון לפי טופס:</label>
-          <select id="form-filter" style="font-family: inherit;"></select>
-          <button class="ghost-button" id="refresh-forms">רענן</button>
-          <span class="muted" id="forms-summary"></span>
-        </div>
-
-        <div class="table" id="forms-table"></div>
-      </section>
-
-      <section class="panel admin" id="reset-session-section">
-        <div class="panel-header">
+        <section class="panel-card">
           <div>
-            <h2>איפוס מפגש</h2>
-            <p class="muted">מאפס מפגש לפי token כדי שהמשתתף יתחיל מחדש.</p>
+            <h2>Management Panel</h2>
+            <p>יצירת משתתפים, איפוס מפגש, ומחיקת משתתפים.</p>
+          </div>
+
+          <form id="create-participant-form" class="admin-form">
+            <select id="group-select" name="groupAssignment"></select>
+            <select id="reading-order-select" name="readingOrder"></select>
+            <button type="submit">צור משתתף חדש</button>
+          </form>
+
+          <form id="reset-session-form" class="admin-form">
+            <input id="reset-session-token" name="token" type="text" required placeholder="Session token" />
+            <button type="submit">אפס מפגש לפי token</button>
+          </form>
+
+          <form id="delete-participant-form" class="admin-form">
+            <input id="delete-participant-code" name="participantCode" type="text" required placeholder="Participant code" />
+            <button class="danger" type="submit">מחק משתתף</button>
+          </form>
+
+          <div id="management-result" class="small-muted"></div>
+        </section>
+
+        <section class="panel-card">
+          <div class="inline-actions">
+            <div>
+              <h2>QA Panel</h2>
+              <p>Session per persona ו-Persona per session עם סינון קבוצה.</p>
+            </div>
+            <select id="qa-group-filter">
+              <option value="all">all</option>
+              <option value="experimental">experimental</option>
+              <option value="control">control</option>
+            </select>
+            <button class="tiny-btn" id="qa-refresh">רענן QA</button>
+          </div>
+
+          <h3>Session per persona</h3>
+          <div class="chart-grid" id="qa-session-per-persona"></div>
+
+          <h3>Persona per session</h3>
+          <div class="chart-grid" id="qa-persona-per-session"></div>
+        </section>
+      </section>
+    </main>
+
+    <div class="modal" id="participant-modal" hidden>
+      <div class="modal-backdrop" id="participant-modal-backdrop"></div>
+      <div class="modal-dialog">
+        <div class="modal-top">
+          <h3 id="participant-modal-title">Participant Details</h3>
+          <div class="inline-actions">
+            <label for="message-session-filter" class="small-muted">הצג מפגש:</label>
+            <select id="message-session-filter">
+              <option value="all">All sessions</option>
+            </select>
+            <button class="tiny-btn" id="participant-modal-close">סגור</button>
           </div>
         </div>
-
-        <form id="reset-session-form" class="inline-form" style="font-family: inherit;">
-          <label class="muted" for="reset-session-token" style="font-family: inherit;">Session token:</label>
-          <input id="reset-session-token" name="token" type="text" required style="font-family: inherit; font-size: 1rem; padding: 0.5em; border-radius: 6px; border: 1px solid #ccc; background: #fff; color: #222; min-width: 340px;" />
-          <button type="submit" style="font-family: inherit; font-size: 1rem; padding: 0.5em 1em; border-radius: 6px; border: none; background: #2d7ff9; color: #fff; cursor: pointer;">אפס מפגש</button>
-        </form>
-
-        <div id="reset-session-result" class="card muted"></div>
-      </section>
-
-      <div class="modal" id="messages-modal" hidden>
-        <div class="modal-backdrop" id="messages-modal-backdrop"></div>
-        <div class="modal-dialog">
-          <div class="modal-header">
-            <h3 id="messages-modal-title">הודעות משתתף</h3>
-            <button class="ghost-button" id="messages-modal-close">סגור</button>
-          </div>
-          <div class="modal-body" id="messages-modal-body">
-            <div class="placeholder">טוען הודעות...</div>
-          </div>
+        <div class="detail-block" id="participant-session-details">
+          <div class="small-muted">טוען נתוני מפגש...</div>
         </div>
       </div>
-    </main>
+    </div>
   </div>
 </body>
 </html>

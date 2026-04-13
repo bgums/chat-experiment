@@ -1,44 +1,29 @@
-const inviteForm = document.getElementById("invite-form");
-const inviteResult = document.getElementById("invite-result");
+const subjectsPanel = document.getElementById("subjects-panel");
+const problemsPanel = document.getElementById("problems-panel");
 const groupSelect = document.getElementById("group-select");
 const readingOrderSelect = document.getElementById("reading-order-select");
-const participantsTable = document.getElementById("participants-table");
-const participantsColumnToggles = document.getElementById("participants-column-toggles");
-const messagesModal = document.getElementById("messages-modal");
-const messagesModalBody = document.getElementById("messages-modal-body");
-const messagesModalTitle = document.getElementById("messages-modal-title");
-const messagesModalClose = document.getElementById("messages-modal-close");
-const messagesModalBackdrop = document.getElementById("messages-modal-backdrop");
-const formsTable = document.getElementById("forms-table");
-const formFilterSelect = document.getElementById("form-filter");
-const refreshFormsBtn = document.getElementById("refresh-forms");
-const downloadAllFormsBtn = document.getElementById("download-all-forms");
-const downloadFilteredFormsBtn = document.getElementById("download-filtered-forms");
-const formsSummary = document.getElementById("forms-summary");
+const createParticipantForm = document.getElementById("create-participant-form");
 const resetSessionForm = document.getElementById("reset-session-form");
 const resetSessionTokenInput = document.getElementById("reset-session-token");
-const resetSessionResult = document.getElementById("reset-session-result");
+const deleteParticipantForm = document.getElementById("delete-participant-form");
+const deleteParticipantCodeInput = document.getElementById("delete-participant-code");
+const managementResult = document.getElementById("management-result");
 
-const messageColumnDefs = [
-  { key: "createdAt", label: "תאריך/שעה", defaultVisible: true },
-  { key: "roleLabel", label: "שולח", defaultVisible: true },
-  { key: "content", label: "תוכן", defaultVisible: true },
-  { key: "sessionNumber", label: "מפגש", defaultVisible: true },
-  { key: "conversationId", label: "conversation_id", defaultVisible: false },
-  { key: "conversationCreatedAt", label: "תאריך/שעת יצירת השיחה", defaultVisible: false }
-];
+const qaGroupFilter = document.getElementById("qa-group-filter");
+const qaRefreshBtn = document.getElementById("qa-refresh");
+const sessionPerPersonaPanel = document.getElementById("qa-session-per-persona");
+const personaPerSessionPanel = document.getElementById("qa-persona-per-session");
 
-const participantColumnDefs = [
-  { key: "groupAssignment", label: "קבוצה", defaultVisible: true },
-  { key: "readingOrder", label: "סדר קריאה", defaultVisible: true },
-  { key: "sessionNumber", label: "מפגש", defaultVisible: true },
-  { key: "sessionStatus", label: "סטטוס מפגש", defaultVisible: true },
-  { key: "sessionStartAt", label: "תחילת מפגש", defaultVisible: true },
-  { key: "sessionLink", label: "קישור למפגש", defaultVisible: true },
-  { key: "sessionPath", label: "סיומת קישור", defaultVisible: true },
-  { key: "sessionToken", label: "token מלא", defaultVisible: false },
-  { key: "overallStatus", label: "סטטוס כללי", defaultVisible: false }
-];
+const participantModal = document.getElementById("participant-modal");
+const participantModalBackdrop = document.getElementById("participant-modal-backdrop");
+const participantModalClose = document.getElementById("participant-modal-close");
+const participantModalTitle = document.getElementById("participant-modal-title");
+const messageSessionFilter = document.getElementById("message-session-filter");
+const participantSessionDetails = document.getElementById("participant-session-details");
+
+let participants = [];
+let chartInstances = [];
+let currentParticipantDetails = null;
 
 function escapeHtml(text) {
   if (text == null) return "";
@@ -50,384 +35,459 @@ function escapeHtml(text) {
     .replace(/'/g, "&#039;");
 }
 
-let visibleColumns = new Set(messageColumnDefs.filter((c) => c.defaultVisible).map((c) => c.key));
-let visibleParticipantColumns = new Set(
-  participantColumnDefs.filter((c) => c.defaultVisible).map((c) => c.key)
-);
-let currentMessages = [];
-let currentParticipantCode = "";
-let formResponses = [];
-let currentFormKey = "all";
-
 function formatDateTime(value) {
   if (!value) return "";
   const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
+  if (Number.isNaN(parsed.getTime())) return String(value);
   return parsed.toLocaleString("he-IL");
 }
 
-function computeSessionStatus(session) {
-  if (!session?.startedAt) {
-    return { label: "Upcoming", className: "status-upcoming" };
-  }
+function computeStatus(session) {
+  const startedAt = session?.consentCompletedAt || null;
+  if (!startedAt) return { key: "upcoming", label: "Upcoming" };
   if (session?.completedAt || session?.status === "completed") {
-    return { label: "Completed", className: "status-completed" };
+    return { key: "completed", label: "Completed" };
   }
-  const elapsedMs = Date.now() - new Date(session.startedAt).getTime();
-  if (elapsedMs < 60 * 60 * 1000) {
-    return { label: "In Progress", className: "status-in-progress" };
-  }
-  return { label: "Incomplete", className: "status-incomplete" };
+  const elapsed = Date.now() - new Date(startedAt).getTime();
+  if (elapsed < 60 * 60 * 1000) return { key: "in_progress", label: "In Progress" };
+  return { key: "incomplete", label: "Incomplete" };
 }
 
-function computeOverallStatus(participant) {
-  const sessions = participant.sessions || [];
-  const startedCount = sessions.filter((s) => s.startedAt).length;
-  const completedCount = sessions.filter((s) => s.completedAt || s.status === "completed").length;
-  if (startedCount === 0) {
-    return { label: "Upcoming", className: "status-upcoming" };
+function renderStatus(status) {
+  if (!status || status.key === "upcoming") {
+    return `<span class="status-tag">${escapeHtml(status?.label || "Upcoming")}</span>`;
   }
-  if (participant.totalSessions && completedCount >= participant.totalSessions) {
-    return { label: "Completed", className: "status-completed" };
+  return `<span class="status-tag status-${escapeHtml(status.key)}">${escapeHtml(status.label)}</span>`;
+}
+
+function normalizePersonaNames(personaNames) {
+  if (!personaNames) return "";
+  return String(personaNames)
+    .split("|")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .join(" | ");
+}
+
+function roleClass(role) {
+  if (role === "user") return "msg-row msg-row-user";
+  if (role === "assistant_feedback") return "msg-row msg-row-feedback";
+  return "msg-row msg-row-assistant";
+}
+
+function roleLabel(role) {
+  if (role === "user") return "Participant";
+  if (role === "assistant_feedback") return "Feedback";
+  return "Persona";
+}
+
+function setManagementMessage(text, isError = false, allowHtml = false) {
+  if (!managementResult) return;
+  managementResult.style.color = isError ? "#8c2020" : "#1b5e34";
+  if (allowHtml) {
+    managementResult.innerHTML = text;
+  } else {
+    managementResult.textContent = text;
   }
-  return { label: "In Progress", className: "status-in-progress" };
 }
 
-function renderStatusPill(statusObj) {
-  const safeLabel = statusObj?.label || "";
-  const safeClass = statusObj?.className || "status-upcoming";
-  return `<span class="status-pill ${safeClass}">${safeLabel}</span>`;
-}
-
-function renderParticipantsColumnToggles() {
-  if (!participantsColumnToggles) return;
-  const toggles = participantColumnDefs
-    .map((c) => {
-      const checked = visibleParticipantColumns.has(c.key) ? "checked" : "";
-      return `<label class="column-toggle"><input type="checkbox" data-col="${c.key}" ${checked}> ${c.label}</label>`;
-    })
-    .join("");
-  participantsColumnToggles.innerHTML = toggles;
-  participantsColumnToggles.addEventListener("change", (event) => {
-    const col = event.target?.dataset?.col;
-    if (!col) return;
-    if (event.target.checked) {
-      visibleParticipantColumns.add(col);
-    } else {
-      visibleParticipantColumns.delete(col);
-    }
-    renderParticipantsTable(currentParticipants || []);
-  });
-}
-
-let currentParticipants = [];
-
-function renderParticipantsTable(data) {
-  currentParticipants = data || [];
-  if (!data?.length) {
-    participantsTable.innerHTML = "<div class='placeholder'>אין משתתפים עדיין.</div>";
+function renderSubjectsPanel() {
+  if (!subjectsPanel) return;
+  if (!participants.length) {
+    subjectsPanel.innerHTML = "<div class='small-muted'>אין משתתפים להצגה.</div>";
     return;
   }
 
-  const origin = window.location.origin;
-  const visibleSessionColumns = participantColumnDefs.filter(
-    (c) => c.key !== "overallStatus" && visibleParticipantColumns.has(c.key)
-  );
-  const showOverallStatus = visibleParticipantColumns.has("overallStatus");
+  const rows = [];
+  participants.forEach((participant) => {
+    const sessions = (participant.sessions || []).slice().sort((a, b) => a.sessionNumber - b.sessionNumber);
+    sessions.forEach((session, idx) => {
+      const status = computeStatus(session);
+      rows.push(`
+        <tr>
+          ${idx === 0 ? `<td rowspan="${sessions.length}"><a href="#" class="id-link participant-link" data-code="${escapeHtml(participant.participantCode)}">${escapeHtml(participant.participantCode)}</a><div class="small-muted">id: ${escapeHtml(participant.id)}</div></td>` : ""}
+          ${idx === 0 ? `<td rowspan="${sessions.length}">${escapeHtml(participant.groupAssignment || "")}</td>` : ""}
+          <td>${escapeHtml(session.sessionNumber)}</td>
+          <td>${escapeHtml(formatDateTime(session.consentCompletedAt))}</td>
+          <td>${renderStatus(status)}</td>
+          <td>${escapeHtml(normalizePersonaNames(session.personaNames) || "-")}</td>
+          <td>${session.token ? `<a href="/?token=${encodeURIComponent(session.token)}" target="_blank" rel="noopener">פתח</a>` : ""}</td>
+        </tr>
+      `);
+    });
+  });
 
-  const headerCells = [
-    ...visibleSessionColumns.map((c) => `<th>${c.label}</th>`),
-    ...(showOverallStatus ? ["<th>סטטוס כללי</th>"] : []),
-    "<th>קוד משתתף</th>"
-  ];
+  subjectsPanel.innerHTML = `
+    <table class="admin-table">
+      <thead>
+        <tr>
+          <th>Participant ID</th>
+          <th>Group</th>
+          <th>Session</th>
+          <th>Session Start Time</th>
+          <th>Status</th>
+          <th>Personas</th>
+          <th>Link</th>
+        </tr>
+      </thead>
+      <tbody>${rows.join("")}</tbody>
+    </table>
+  `;
+}
 
-  const rows = data
-    .map((p) => {
-      const sessions = (p.sessions || []).slice().sort((a, b) => a.sessionNumber - b.sessionNumber);
-      const rowSpan = sessions.length || 1;
-      const overallStatus = computeOverallStatus(p);
+function renderProblemsPanel(rows) {
+  if (!problemsPanel) return;
+  if (!rows?.length) {
+    problemsPanel.innerHTML = "<div class='small-muted'>אין כרגע מפגשים לא שלמים.</div>";
+    return;
+  }
 
-      if (!sessions.length) {
-        const sessionCells = visibleSessionColumns
-          .map(() => "<td></td>")
-          .join("");
-        const overallCell = showOverallStatus
-          ? `<td rowspan="${rowSpan}">${renderStatusPill(overallStatus)}</td>`
-          : "";
-        const participantCell = `<td rowspan="${rowSpan}"><a href="#" class="participant-link" data-code="${p.participantCode}">${p.participantCode}</a></td>`;
-        return `<tr>${sessionCells}${overallCell}${participantCell}</tr>`;
-      }
+  const tableRows = rows.map((row) => `
+    <tr>
+      <td>${escapeHtml(row.participantCode)}</td>
+      <td>${escapeHtml(row.participantId)}</td>
+      <td>${escapeHtml(row.sessionNumber)}</td>
+      <td>${escapeHtml(row.sessionToken)}</td>
+      <td>${escapeHtml(formatDateTime(row.consentCompletedAt))}</td>
+    </tr>
+  `).join("");
 
-      return sessions
-        .map((session, idx) => {
-          const statusObj = computeSessionStatus(session);
-          const sessionValues = {
-            groupAssignment: p.groupAssignment === "control" ? "Control" : "Experimental",
-            readingOrder: p.readingOrder === "confrontation_first"
-              ? "Confrontation → Withdrawal"
-              : "Withdrawal → Confrontation",
-            sessionNumber: session.sessionNumber ? `מפגש ${session.sessionNumber}` : "",
-            sessionStatus: renderStatusPill(statusObj),
-            sessionStartAt: formatDateTime(session.startedAt),
-            sessionLink: session.token
-              ? `<a href="${origin}/?token=${session.token}" target="_blank" rel="noopener">פתח</a>`
-              : "",
-            sessionPath: session.token ? `/?token=${session.token}` : "",
-            sessionToken: session.token || ""
-          };
+  problemsPanel.innerHTML = `
+    <table class="admin-table">
+      <thead>
+        <tr>
+          <th>participant_code</th>
+          <th>participant_id</th>
+          <th>session</th>
+          <th>session token</th>
+          <th>session start time</th>
+        </tr>
+      </thead>
+      <tbody>${tableRows}</tbody>
+    </table>
+  `;
+}
 
-          const cells = visibleSessionColumns
-            .map((col) => `<td>${sessionValues[col.key] ?? ""}</td>`)
-            .join("");
+function destroyCharts() {
+  chartInstances.forEach((instance) => instance.destroy());
+  chartInstances = [];
+}
 
-          const overallCell = showOverallStatus && idx === 0
-            ? `<td rowspan="${rowSpan}">${renderStatusPill(overallStatus)}</td>`
-            : "";
-          const participantCell = idx === 0
-            ? `<td rowspan="${rowSpan}"><a href="#" class="participant-link" data-code="${p.participantCode}">${p.participantCode}</a></td>`
-            : "";
+function hexToRgb(hex) {
+  const clean = String(hex).replace("#", "");
+  const num = Number.parseInt(clean, 16);
+  return {
+    r: (num >> 16) & 255,
+    g: (num >> 8) & 255,
+    b: num & 255
+  };
+}
 
-          return `<tr>${cells}${overallCell}${participantCell}</tr>`;
-        })
-        .join("");
-    })
-    .join("");
+function rgbToHex({ r, g, b }) {
+  const toHex = (n) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, "0");
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
 
-  participantsTable.innerHTML = `<table>
-    <thead><tr>${headerCells.join("")}</tr></thead>
-    <tbody>${rows}</tbody>
-  </table>`;
+function tint(hex, ratio) {
+  const rgb = hexToRgb(hex);
+  return rgbToHex({
+    r: rgb.r + (255 - rgb.r) * ratio,
+    g: rgb.g + (255 - rgb.g) * ratio,
+    b: rgb.b + (255 - rgb.b) * ratio
+  });
+}
+
+const valueLabelPlugin = {
+  id: "valueLabelPlugin",
+  afterDatasetsDraw(chart) {
+    const { ctx } = chart;
+    const dataset = chart.data.datasets[0];
+    if (!dataset) return;
+    const meta = chart.getDatasetMeta(0);
+    ctx.save();
+    ctx.font = "700 11px Assistant, Inter, Segoe UI, sans-serif";
+    ctx.fillStyle = "#1f2d44";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+
+    meta.data.forEach((arc, index) => {
+      const value = Number(dataset.data[index]) || 0;
+      if (value <= 0) return;
+      const pos = arc.tooltipPosition();
+      ctx.fillText(String(value), pos.x, pos.y);
+    });
+
+    ctx.restore();
+  }
+};
+
+function getCategoryPalette(count) {
+  const base = ["#1f77b4", "#2ca02c", "#ff7f0e", "#d62728", "#9467bd", "#17becf", "#8c564b", "#bcbd22"];
+  const result = [];
+  for (let i = 0; i < count; i += 1) result.push(base[i % base.length]);
+  return result;
+}
+
+function renderSplitPieCharts(container, items, keyLabel, keyValue) {
+  if (!container) return;
+  if (!items || !Object.keys(items).length) {
+    container.innerHTML = "<div class='small-muted'>אין נתונים להצגה.</div>";
+    return;
+  }
+
+  const blocks = Object.entries(items).map(([key]) => {
+    const safe = `chart_${keyLabel}_${String(key).replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+    return `
+      <div class="chart-card">
+        <h4>${escapeHtml(keyLabel === "persona" ? key : `Session ${key}`)}</h4>
+        <canvas id="${safe}"></canvas>
+      </div>
+    `;
+  }).join("");
+
+  container.innerHTML = blocks;
+
+  Object.entries(items).forEach(([key, values]) => {
+    const safe = `chart_${keyLabel}_${String(key).replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+    const canvas = document.getElementById(safe);
+    if (!canvas || !window.Chart) return;
+
+    const palette = getCategoryPalette(values.length);
+    const labels = [];
+    const data = [];
+    const colors = [];
+
+    values.forEach((entry, idx) => {
+      const categoryLabel = keyValue === "session"
+        ? `Session ${entry.sessionNumber}`
+        : entry.personaName;
+      const completedCount = Number(entry.completedCount) || 0;
+      const openCount = Number(entry.openCount) || 0;
+
+      labels.push(`${categoryLabel} completed`);
+      data.push(completedCount);
+      colors.push(palette[idx]);
+
+      labels.push(`${categoryLabel} open`);
+      data.push(openCount);
+      colors.push(tint(palette[idx], 0.45));
+    });
+
+    const chart = new window.Chart(canvas, {
+      type: "pie",
+      data: {
+        labels,
+        datasets: [{ data, backgroundColor: colors }]
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: {
+            position: "bottom",
+            labels: { boxWidth: 12 }
+          }
+        }
+      },
+      plugins: [valueLabelPlugin]
+    });
+    chartInstances.push(chart);
+  });
 }
 
 async function loadParticipants() {
   const response = await fetch("/api/admin/participants");
-  if (!response.ok) return;
+  if (!response.ok) throw new Error("Failed to load participants");
   const data = await response.json();
-  renderParticipantsTable(data.participants || []);
+  participants = data.participants || [];
+  renderSubjectsPanel();
 }
 
-function renderFormFilterOptions(formKeys) {
-  if (!formFilterSelect) return;
-  const uniqueKeys = Array.from(new Set(formKeys || [])).filter(Boolean).sort();
-  const previous = formFilterSelect.value || "all";
-  const options = ["<option value='all'>כל הטפסים</option>", ...uniqueKeys.map((key) => `<option value="${escapeHtml(key)}">${escapeHtml(key)}</option>`)];
-  formFilterSelect.innerHTML = options.join("");
-  if (uniqueKeys.includes(previous)) {
-    formFilterSelect.value = previous;
-  }
+async function loadIncompleteSessions() {
+  const response = await fetch("/api/admin/problems/incomplete-sessions");
+  if (!response.ok) throw new Error("Failed to load problems");
+  const data = await response.json();
+  renderProblemsPanel(data.sessions || []);
 }
 
-function formatResponseValue(value) {
-  if (Array.isArray(value)) return value.join(" | ");
-  if (value && typeof value === "object") return JSON.stringify(value);
-  return value ?? "";
+async function loadQaDistribution() {
+  destroyCharts();
+  const group = qaGroupFilter?.value || "all";
+  const response = await fetch(`/api/admin/qa/persona-distribution?group=${encodeURIComponent(group)}`);
+  if (!response.ok) throw new Error("Failed to load QA data");
+  const data = await response.json();
+  renderSplitPieCharts(sessionPerPersonaPanel, data.sessionPerPersona || {}, "persona", "session");
+  renderSplitPieCharts(personaPerSessionPanel, data.personaPerSession || {}, "session", "persona");
 }
 
-function renderResponseBadges(responses) {
-  const entries = Object.entries(responses || {});
-  if (!entries.length) return "<span class='muted'>ללא תשובות</span>";
-  return `<div class="response-chips">${entries
-    .map(([key, value]) => {
-      const formatted = escapeHtml(formatResponseValue(value));
-      return `<span class="response-chip"><strong>${escapeHtml(key)}:</strong> ${formatted}</span>`;
-    })
-    .join("")}</div>`;
+function hideParticipantModal() {
+  if (participantModal) participantModal.hidden = true;
 }
 
-function renderFormsTable(data) {
-  if (!formsTable) return;
-  if (!data?.length) {
-    formsTable.innerHTML = "<div class='placeholder'>אין תשובות לשמירה עדיין.</div>";
-    return;
-  }
-
-  const headerRow = ["טופס", "משתתף", "מפגש", "מטופל/ת", "נוצר ב", "תשובות"]
-    .map((h) => `<th>${h}</th>`)
-    .join("");
-
-  const rows = data
-    .map((row) => {
-      const personaLabel = row.sessionPersonaId
-        ? `${escapeHtml(row.personaName || "מטופל")}${row.personaCsvId ? ` (#${row.personaCsvId})` : ""}`
-        : "—";
-      const participantLink = row.participantCode
-        ? `<a href="#" class="participant-link" data-code="${escapeHtml(row.participantCode)}">${escapeHtml(row.participantCode)}</a>`
-        : "";
-      return `<tr>
-        <td>${escapeHtml(row.formKey)}</td>
-        <td>${participantLink}</td>
-        <td>${escapeHtml(row.sessionNumber)}</td>
-        <td>${personaLabel}</td>
-        <td>${escapeHtml(formatDateTime(row.createdAt))}</td>
-        <td>${renderResponseBadges(row.responses)}</td>
-      </tr>`;
-    })
-    .join("");
-
-  formsTable.innerHTML = `<div class="messages-table"><table><thead><tr>${headerRow}</tr></thead><tbody>${rows}</tbody></table></div>`;
-}
-
-async function loadFormResponses() {
-  if (!formsTable) return;
-  const formKey = formFilterSelect?.value && formFilterSelect.value !== "all" ? formFilterSelect.value : null;
-  const qs = formKey ? `?formKey=${encodeURIComponent(formKey)}` : "";
-  formsTable.innerHTML = "<div class='placeholder'>טוען תשובות...</div>";
-  try {
-    const resp = await fetch(`/api/admin/forms/responses${qs}`);
-    if (!resp.ok) throw new Error("request failed");
-    const data = await resp.json();
-    renderFormFilterOptions(data.formKeys || []);
-    formResponses = data.responses || [];
-    currentFormKey = formKey || "all";
-    renderFormsTable(formResponses);
-    if (formsSummary) {
-      const label = formKey ? `טופס ${formKey}` : "כל הטפסים";
-      formsSummary.textContent = `${label}: ${formResponses.length} רשומות`;
+function buildSessionBuckets(details) {
+  const sessionMap = new Map();
+  (details.sessions || []).forEach((session) => {
+    const key = Number(session.sessionNumber);
+    if (!sessionMap.has(key)) {
+      sessionMap.set(key, {
+        sessionNumber: key,
+        session,
+        forms: [],
+        messages: []
+      });
     }
-  } catch (error) {
-    formsTable.innerHTML = "<div class='placeholder'>שגיאה בטעינת תשובות הטפסים.</div>";
-  }
-}
-
-function downloadForms(formKey) {
-  const qs = formKey ? `?formKey=${encodeURIComponent(formKey)}` : "";
-  window.location.href = `/api/admin/forms/export${qs}`;
-}
-
-function hideMessagesModal() {
-  if (messagesModal) messagesModal.hidden = true;
-}
-
-function renderMessagesModal(participantCode, messages) {
-  currentParticipantCode = participantCode;
-  currentMessages = messages || [];
-  messagesModalTitle.textContent = `הודעות עבור ${participantCode}`;
-
-  const toggles = messageColumnDefs
-    .map((c) => {
-      const checked = visibleColumns.has(c.key) ? "checked" : "";
-      return `<label class="column-toggle"><input type="checkbox" data-col="${c.key}" ${checked}> ${c.label}</label>`;
-    })
-    .join("");
-
-  messagesModalBody.innerHTML = `
-    <div class="column-toggles">${toggles}</div>
-    <div id="messages-table-container"></div>
-  `;
-
-  const togglesContainer = messagesModalBody.querySelector(".column-toggles");
-  togglesContainer.addEventListener("change", (event) => {
-    const col = event.target?.dataset?.col;
-    if (!col) return;
-    if (event.target.checked) {
-      visibleColumns.add(col);
-    } else {
-      visibleColumns.delete(col);
-    }
-    renderMessagesTable();
   });
 
-  renderMessagesTable();
-  messagesModal.hidden = false;
+  (details.forms || []).forEach((form) => {
+    const key = Number(form.sessionNumber) || 0;
+    if (!sessionMap.has(key)) {
+      sessionMap.set(key, { sessionNumber: key, session: { sessionNumber: key }, forms: [], messages: [] });
+    }
+    sessionMap.get(key).forms.push(form);
+  });
+
+  (details.messages || []).forEach((message) => {
+    const key = Number(message.sessionNumber) || 0;
+    if (!sessionMap.has(key)) {
+      sessionMap.set(key, { sessionNumber: key, session: { sessionNumber: key }, forms: [], messages: [] });
+    }
+    sessionMap.get(key).messages.push(message);
+  });
+
+  return Array.from(sessionMap.values()).sort((a, b) => a.sessionNumber - b.sessionNumber);
 }
 
-function renderMessagesTable() {
-  const container = document.getElementById("messages-table-container");
-  if (!container) return;
+function renderSessionDetails(details, selectedSession = "all") {
+  if (!participantSessionDetails) return;
 
-  if (!currentMessages.length) {
-    container.innerHTML = `<div class="placeholder">אין הודעות זמינות למשתתף זה.</div>`;
+  const sessions = buildSessionBuckets(details);
+  const selectedNum = selectedSession === "all" ? null : Number(selectedSession);
+  const filtered = selectedNum == null
+    ? sessions
+    : sessions.filter((s) => s.sessionNumber === selectedNum);
+
+  if (!filtered.length) {
+    participantSessionDetails.innerHTML = "<div class='small-muted'>אין נתונים להצגה למפגש שנבחר.</div>";
     return;
   }
 
-  const headers = messageColumnDefs.filter((c) => visibleColumns.has(c.key));
-  const headerRow = headers.map((h) => `<th>${h.label}</th>`).join("");
+  const content = filtered.map((bucket) => {
+    const status = computeStatus(bucket.session || {});
 
-  const rows = currentMessages
-    .map((m) => {
-      const roleLabel = m.role === "assistant" ? "מטפל" : "משתתף";
-      const values = {
-        createdAt: m.createdAt || "",
-        roleLabel,
-        content: m.content || "",
-        sessionNumber: m.sessionNumber || "",
-        conversationId: m.conversationId || "",
-        conversationCreatedAt: m.conversationCreatedAt || ""
-      };
-      const cells = headers.map((h) => `<td>${values[h.key] ?? ""}</td>`).join("");
-      return `<tr>${cells}</tr>`;
-    })
-    .join("");
+    const formsHtml = bucket.forms.length
+      ? bucket.forms.map((form) => {
+        const qaRows = (form.qaPairs || []).map((pair) => `
+          <div class="qa-item">
+            <div><strong>שאלה:</strong> ${escapeHtml(pair.question || pair.key)}</div>
+            <div><strong>תשובה:</strong> ${escapeHtml(pair.answer || "")}</div>
+          </div>
+        `).join("");
+        const persona = form.personaName ? ` · ${escapeHtml(form.personaName)}` : "";
+        return `
+          <div class="qa-item">
+            <div><strong>${escapeHtml(form.formKey)}</strong>${persona}</div>
+            <div class="small-muted">${escapeHtml(formatDateTime(form.createdAt))}</div>
+            ${qaRows || "<div class='small-muted'>ללא תשובות.</div>"}
+          </div>
+        `;
+      }).join("")
+      : "<div class='small-muted' style='padding:0 10px 10px;'>אין תשובות טפסים.</div>";
 
-  container.innerHTML = `
-    <div class="messages-table">
-      <table>
-        <thead><tr>${headerRow}</tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>
-  `;
+    const chatHtml = bucket.messages.length
+      ? `<div class="chat-stream">${bucket.messages.map((message) => `
+          <div class="${roleClass(message.role)}">
+            <div class="msg-bubble">${escapeHtml(message.content || "")}</div>
+            <div class="msg-meta">${escapeHtml(roleLabel(message.role))} · ${escapeHtml(formatDateTime(message.createdAt))}</div>
+          </div>
+        `).join("")}</div>`
+      : "<div class='small-muted' style='padding:0 10px 10px;'>אין הודעות בצ'אט.</div>";
+
+    return `
+      <div class="session-block">
+        <div class="session-block-header">
+          Session ${escapeHtml(bucket.sessionNumber)} · ${renderStatus(status)}
+          <span class="small-muted"> · Personas: ${escapeHtml(normalizePersonaNames(bucket.session?.personaNames) || "-")}</span>
+        </div>
+
+        <details class="session-collapsible">
+          <summary>Form Responses</summary>
+          ${formsHtml}
+        </details>
+
+        <details class="session-collapsible">
+          <summary>Chat</summary>
+          ${chatHtml}
+        </details>
+      </div>
+    `;
+  }).join("");
+
+  participantSessionDetails.innerHTML = content;
 }
 
-async function openMessagesModalForParticipant(code) {
-  if (!code) return;
-  messagesModalBody.innerHTML = `<div class="placeholder">טוען הודעות...</div>`;
-  messagesModalTitle.textContent = `הודעות עבור ${code}`;
-  messagesModal.hidden = false;
+function populateMessageSessionFilter(details) {
+  if (!messageSessionFilter) return;
+  const sessions = (details.sessions || []).slice().sort((a, b) => a.sessionNumber - b.sessionNumber);
+  const options = ["<option value='all'>All sessions</option>"];
+  sessions.forEach((session) => {
+    options.push(`<option value="${escapeHtml(session.sessionNumber)}">Session ${escapeHtml(session.sessionNumber)}</option>`);
+  });
+  messageSessionFilter.innerHTML = options.join("");
+  messageSessionFilter.value = "all";
+}
+
+async function openParticipantModal(participantCode) {
+  if (!participantCode || !participantModal) return;
+  participantModalTitle.textContent = `Participant ${participantCode}`;
+  participantSessionDetails.innerHTML = "<div class='small-muted'>טוען נתונים...</div>";
+  participantModal.hidden = false;
 
   try {
-    const resp = await fetch(`/api/admin/participant/${code}/messages`);
-    if (!resp.ok) throw new Error("load failed");
-    const data = await resp.json();
-    renderMessagesModal(code, data.messages || []);
-  } catch (err) {
-    messagesModalBody.innerHTML = `<div class="placeholder">שגיאה בטעינת ההודעות.</div>`;
+    const response = await fetch(`/api/admin/participant/${encodeURIComponent(participantCode)}/details`);
+    if (!response.ok) throw new Error("failed to load participant details");
+    const data = await response.json();
+    currentParticipantDetails = data;
+    populateMessageSessionFilter(data);
+    renderSessionDetails(data, "all");
+  } catch (_error) {
+    participantSessionDetails.innerHTML = "<div class='small-muted'>שגיאה בטעינת נתוני מפגש.</div>";
   }
 }
 
-participantsTable?.addEventListener("click", async (event) => {
-  const target = event.target;
-  if (target && target.classList.contains("participant-link")) {
-    event.preventDefault();
-    await openMessagesModalForParticipant(target.dataset.code);
+async function resetSessionByToken(token) {
+  if (!token) return;
+  const response = await fetch("/api/admin/session/reset", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token })
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload?.error || "שגיאה באיפוס מפגש.");
   }
-});
+  setManagementMessage(`אופס מפגש ${payload.sessionNumber} עבור ${payload.participantCode}`);
+}
 
-formsTable?.addEventListener("click", async (event) => {
-  const target = event.target;
-  if (target && target.classList.contains("participant-link")) {
-    event.preventDefault();
-    await openMessagesModalForParticipant(target.dataset.code);
-  }
-});
+async function loadSessionOptions() {
+  if (!groupSelect || !readingOrderSelect) return;
+  const response = await fetch("/api/admin/session-options");
+  if (!response.ok) return;
+  const data = await response.json();
+  groupSelect.innerHTML = (data.groups || []).map((group) => `<option value="${group.key}">${group.label}</option>`).join("");
+  readingOrderSelect.innerHTML = (data.readingOrders || []).map((order) => `<option value="${order.key}">${order.label}</option>`).join("");
+}
 
-messagesModalClose?.addEventListener("click", hideMessagesModal);
-messagesModalBackdrop?.addEventListener("click", hideMessagesModal);
+async function refreshAllPanels() {
+  // Run participants first so persona assignments exist before QA counts.
+  await loadParticipants();
+  await Promise.all([
+    loadIncompleteSessions(),
+    loadQaDistribution()
+  ]);
+}
 
-formFilterSelect?.addEventListener("change", () => {
-  loadFormResponses();
-});
-
-refreshFormsBtn?.addEventListener("click", (event) => {
+createParticipantForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
-  loadFormResponses();
-});
-
-downloadAllFormsBtn?.addEventListener("click", (event) => {
-  event.preventDefault();
-  downloadForms(null);
-});
-
-downloadFilteredFormsBtn?.addEventListener("click", (event) => {
-  event.preventDefault();
-  const selectedKey = formFilterSelect?.value && formFilterSelect.value !== "all" ? formFilterSelect.value : null;
-  downloadForms(selectedKey);
-});
-
-inviteForm?.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  inviteResult.textContent = "יוצר הזמנה...";
-
+  setManagementMessage("יוצר משתתף חדש...");
   try {
     const groupAssignment = groupSelect?.value === "control" ? "control" : "experimental";
     const readingOrder = readingOrderSelect?.value === "confrontation_first"
@@ -438,30 +498,15 @@ inviteForm?.addEventListener("submit", async (event) => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ groupAssignment, readingOrder })
     });
-
-    if (!response.ok) {
-      inviteResult.textContent = "שגיאה ביצירת הזמנה";
-      return;
-    }
-
-    const data = await response.json();
-    const links = (data.sessions || [])
-      .map((session) => (
-        `<div>מפגש ${session.sessionNumber}: <a href="${session.url}" target="_blank" rel="noopener">${session.url}</a>` +
-        ` <div class="muted">סיומת קישור לשיתוף: ${session.path}</div></div>`
-      ))
-      .join("");
-    const groupLabel = data.groupAssignment === "control" ? "Control" : "Experimental";
-    const orderLabel = data.readingOrder === "confrontation_first"
-      ? "Confrontation → Withdrawal"
-      : "Withdrawal → Confrontation";
-    inviteResult.innerHTML = `<strong>קוד משתתף:</strong> ${data.participantCode}<br />` +
-      `<div><strong>קבוצה:</strong> ${groupLabel}</div>` +
-      `<div><strong>סדר קריאה:</strong> ${orderLabel}</div>` +
-      `${links}`;
-    loadParticipants();
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload?.error || "שגיאה ביצירת משתתף.");
+    const links = (payload.sessions || [])
+      .map((s) => `Session ${escapeHtml(s.sessionNumber)}: <a href="/?token=${encodeURIComponent(s.token)}" target="_blank" rel="noopener">פתח</a>`)
+      .join(" · ");
+    setManagementMessage(`נוצר: <strong>${escapeHtml(payload.participantCode)}</strong><br>${links}`, false, true);
+    await refreshAllPanels();
   } catch (error) {
-    inviteResult.textContent = "שגיאה ביצירת הזמנה";
+    setManagementMessage(error.message || "שגיאה ביצירה.", true);
   }
 });
 
@@ -469,75 +514,82 @@ resetSessionForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
   const token = (resetSessionTokenInput?.value || "").trim();
   if (!token) {
-    if (resetSessionResult) {
-      resetSessionResult.textContent = "יש להזין token לפני האיפוס.";
-    }
+    setManagementMessage("יש להזין session token.", true);
     return;
   }
 
-  if (resetSessionResult) {
-    resetSessionResult.textContent = "מאפס מפגש...";
-  }
-
   try {
-    const response = await fetch("/api/admin/session/reset", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token })
-    });
-
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(payload?.error || "שגיאה באיפוס המפגש.");
-    }
-
-    if (resetSessionResult) {
-      resetSessionResult.innerHTML = `המפגש אופס בהצלחה: משתתף ${escapeHtml(payload.participantCode || "")} · מפגש ${escapeHtml(payload.sessionNumber || "")}`;
-    }
-    if (resetSessionTokenInput) {
-      resetSessionTokenInput.value = "";
-    }
-    loadParticipants();
+    await resetSessionByToken(token);
+    if (resetSessionTokenInput) resetSessionTokenInput.value = "";
+    await refreshAllPanels();
   } catch (error) {
-    if (resetSessionResult) {
-      resetSessionResult.textContent = error?.message || "שגיאה באיפוס המפגש.";
-    }
+    setManagementMessage(error.message || "שגיאה באיפוס.", true);
   }
 });
 
-async function loadSessionOptions() {
-  if (!groupSelect || !readingOrderSelect) return;
-  try {
-    const response = await fetch("/api/admin/session-options");
-    if (!response.ok) return;
-    const data = await response.json();
-    const groupOptions = (data.groups || []).map((group) =>
-      `<option value="${group.key}">${group.label}</option>`
-    );
-    const readingOrderOptions = (data.readingOrders || []).map((order) =>
-      `<option value="${order.key}">${order.label}</option>`
-    );
-    groupSelect.innerHTML = groupOptions.join("");
-    readingOrderSelect.innerHTML = readingOrderOptions.join("");
-    toggleReadingOrderVisibility();
-  } catch (error) {
-    console.warn("Failed to load session options", error);
+deleteParticipantForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const participantCode = (deleteParticipantCodeInput?.value || "").trim();
+  if (!participantCode) {
+    setManagementMessage("יש להזין participant code למחיקה.", true);
+    return;
   }
-}
+  if (!window.confirm(`למחוק את ${participantCode}?`)) return;
 
-function toggleReadingOrderVisibility() {
-  if (!groupSelect || !readingOrderSelect) return;
-  const isControl = groupSelect.value === "control";
-  readingOrderSelect.disabled = !isControl;
-}
+  try {
+    const response = await fetch(`/api/admin/participant/${encodeURIComponent(participantCode)}`, {
+      method: "DELETE"
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload?.error || "שגיאה במחיקת משתתף.");
+    setManagementMessage(`נמחק בהצלחה: ${payload.participantCode}`);
+    if (deleteParticipantCodeInput) deleteParticipantCodeInput.value = "";
+    await refreshAllPanels();
+  } catch (error) {
+    setManagementMessage(error.message || "שגיאה במחיקה.", true);
+  }
+});
 
-groupSelect?.addEventListener("change", toggleReadingOrderVisibility);
+subjectsPanel?.addEventListener("click", async (event) => {
+  const target = event.target;
+  if (target && target.classList.contains("participant-link")) {
+    event.preventDefault();
+    await openParticipantModal(target.dataset.code);
+  }
+});
 
-function initialize() {
-  renderParticipantsColumnToggles();
-  loadSessionOptions();
-  loadParticipants();
-  loadFormResponses();
+messageSessionFilter?.addEventListener("change", () => {
+  if (!currentParticipantDetails) return;
+  renderSessionDetails(currentParticipantDetails, messageSessionFilter.value || "all");
+});
+
+qaRefreshBtn?.addEventListener("click", async (event) => {
+  event.preventDefault();
+  try {
+    await loadQaDistribution();
+  } catch (_error) {
+    sessionPerPersonaPanel.innerHTML = "<div class='small-muted'>שגיאה בטעינת QA.</div>";
+    personaPerSessionPanel.innerHTML = "<div class='small-muted'>שגיאה בטעינת QA.</div>";
+  }
+});
+
+qaGroupFilter?.addEventListener("change", () => {
+  loadQaDistribution().catch(() => {
+    sessionPerPersonaPanel.innerHTML = "<div class='small-muted'>שגיאה בטעינת QA.</div>";
+    personaPerSessionPanel.innerHTML = "<div class='small-muted'>שגיאה בטעינת QA.</div>";
+  });
+});
+
+participantModalClose?.addEventListener("click", hideParticipantModal);
+participantModalBackdrop?.addEventListener("click", hideParticipantModal);
+
+async function initialize() {
+  try {
+    await loadSessionOptions();
+    await refreshAllPanels();
+  } catch (error) {
+    setManagementMessage(error.message || "שגיאה בטעינת הנתונים.", true);
+  }
 }
 
 initialize();
