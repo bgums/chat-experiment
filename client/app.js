@@ -414,7 +414,7 @@ function renderForm(formDef, step = {}, savedResponses = {}) {
         radio.type = "radio";
         radio.name = item.id;
         radio.value = option;
-        radio.required = true;
+        radio.required = !!item.required;
         optionLabel.appendChild(radio);
         optionLabel.appendChild(document.createTextNode(option));
         list.appendChild(optionLabel);
@@ -431,7 +431,7 @@ function renderForm(formDef, step = {}, savedResponses = {}) {
         checkbox.type = "checkbox";
         checkbox.name = `${item.id}[]`;
         checkbox.value = option;
-        checkbox.required = true;
+        checkbox.required = !!item.required;
         optionLabel.appendChild(checkbox);
         optionLabel.appendChild(document.createTextNode(option));
         list.appendChild(optionLabel);
@@ -457,6 +457,7 @@ function renderForm(formDef, step = {}, savedResponses = {}) {
       slider.max = max;
       slider.step = 1;
       slider.value = String(sliderDefault);
+      slider.dataset.touched = "false";
       slider.classList.add("likert-slider");
       slider.required = !!item.required;
       
@@ -496,7 +497,11 @@ function renderForm(formDef, step = {}, savedResponses = {}) {
       }
       
       slider.addEventListener("input", (e) => {
+        e.target.dataset.touched = "true";
         updateBoldness(e.target.value);
+      });
+      slider.addEventListener("change", (e) => {
+        e.target.dataset.touched = "true";
       });
       
       // Auto-set the initial boldness after a short delay to ensure rendering is complete
@@ -590,6 +595,8 @@ function renderForm(formDef, step = {}, savedResponses = {}) {
           if (container && container._updateBoldness) {
             container._updateBoldness(saved);
           }
+          // mark as touched when a saved response was applied
+          slider.dataset.touched = "true";
         }
       }
     });
@@ -659,9 +666,18 @@ function renderForm(formDef, step = {}, savedResponses = {}) {
         if (!slider) {
           responses[id] = "";
         } else {
-          // A slider always has a value, but we might want to check for "untouched" state if we really care.
-          // For simplicity, we just take the current value.
-          responses[id] = Number(slider.value);
+          // Determine midpoint for the slider range
+          const min = Number(slider.min || 1);
+          const max = Number(slider.max || 5);
+          const midpoint = Math.round((min + max) / 2);
+          const val = Number(slider.value);
+          // If the user never touched the slider and it remains on the midpoint,
+          // explicitly record the midpoint (e.g., 3 for a 1-5 scale).
+          if (slider.dataset.touched !== "true" && val === midpoint) {
+            responses[id] = midpoint;
+          } else {
+            responses[id] = val;
+          }
         }
       }
     });

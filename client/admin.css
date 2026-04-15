@@ -217,6 +217,26 @@ details.panel-card > summary h2 {
   cursor: pointer;
 }
 
+/* Copy email small button used in participants table */
+.copy-email-btn {
+  font-size: 0.88rem;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(37, 99, 235, 0.16);
+  background: var(--admin-primary-soft);
+  color: var(--admin-primary-dark);
+  cursor: pointer;
+  transition: background-color 0.12s ease, transform 0.06s ease, color 0.12s ease;
+}
+.copy-email-btn:hover {
+  background: var(--admin-primary);
+  color: #fff;
+  transform: translateY(-1px);
+}
+.copy-email-btn:active {
+  transform: translateY(0);
+}
+
 .small-muted {
   color: var(--admin-muted);
   font-size: 0.87rem;

@@ -124,6 +124,7 @@ function renderSubjectsPanel() {
           <td>${escapeHtml(formatDateTime(session.consentCompletedAt))}</td>
           <td>${renderStatus(status)}</td>
           <td>${escapeHtml(personaDisplay || "-")}</td>
+          <td><button class="copy-email-btn" aria-label="העתק אימייל" data-token="${escapeHtml(session.token || "")}" data-session="${escapeHtml(session.sessionNumber)}" data-code="${escapeHtml(participant.participantCode)}">העתק</button></td>
           <td>${session.token ? `<a href="/?token=${encodeURIComponent(session.token)}" target="_blank" rel="noopener">פתח</a>` : ""}</td>
         </tr>
       `);
@@ -140,12 +141,41 @@ function renderSubjectsPanel() {
           <th>Session Start Time</th>
           <th>Status</th>
           <th>Personas</th>
+          <th>אימייל</th>
           <th>Link</th>
         </tr>
       </thead>
       <tbody>${rows.join("")}</tbody>
     </table>
   `;
+}
+
+function buildSessionEmail(participant, session) {
+  const link = session && session.token ? `${location.origin}/?token=${encodeURIComponent(session.token)}` : "[no link available]";
+
+  const preambleSession1 = `שלום,\nברוכים הבאים לניסוי "איך עובדים עם מטופלים - רכישת מיומנויות טיפוליות".\nבמייל זה מצורף הלינק למפגש הראשון מתוך ארבעה.\n\n`;
+  const preambleSession2 = `שלום,\nבמייל זה מצורף הלינק למפגש השני מתוך ארבעה בניסוי "איך עובדים עם מטופלים - רכישת מיומנויות טיפוליות".\n\n`;
+  const preambleSession3 = `שלום,\nבמייל זה מצורף הלינק למפגש השלישי מתוך ארבעה, בניסוי "איך עובדים עם מטופלים - רכישת מיומנויות טיפוליות".\n\n`;
+  const preambleSession4 = `שלום,\nבמייל זה מצורף הלינק למפגש הרביעי והאחרון בניסוי "איך עובדים עם מטופלים - רכישת מיומנויות טיפוליות".\n\n`;
+
+  const commonBody = `לפני תחילת הניסוי, אנא וודאו שאתם מוכנים: שבו בסביבה שקטה המאפשרת ריכוז, ובצעו את הניסוי על גבי מחשב.\nהלינק זמין עבורכם לפתיחה ב-24 השעות הקרובות, אך עם התחלת הניסוי אנא בצעו אותו עד סופו. במקרה של בעיות או קטיעה של הניסוי מסיבה מוצדקת, פנו למנהלת הניסוי מאיה סלומון במייל salomonm@post.bgu.ac.il\nאנא מכם, הימנעו מלדבר עם חברים מהתואר על תוכן הניסוי הזה - הדבר עוזר לנו לשמור את התהליך ניטרלי עבור כל נבדק, ומאפשר לנו לעשות מחקר טוב יותר.\n\n`;
+
+  const linkLine = `הלינק למפגש זה:\n${link}\n\n`;
+  const closing = `בהצלחה`;
+
+  const sessionNumber = Number(session?.sessionNumber || 0);
+  let body = commonBody + linkLine + closing;
+  if (sessionNumber === 1) {
+    body = preambleSession1 + commonBody + linkLine + closing;
+  } else if (sessionNumber === 2) {
+    body = preambleSession2 + commonBody + linkLine + closing;
+  } else if (sessionNumber === 3) {
+    body = preambleSession3 + commonBody + linkLine + closing;
+  } else if (sessionNumber === 4) {
+    body = preambleSession4 + commonBody + linkLine + closing;
+  }
+
+  return body;
 }
 
 function renderProblemsPanel(rows) {
@@ -599,6 +629,25 @@ deleteParticipantForm?.addEventListener("submit", async (event) => {
 });
 
 subjectsPanel?.addEventListener("click", async (event) => {
+  // Handle copy-email button clicks first
+  const btn = event.target.closest && event.target.closest('.copy-email-btn');
+  if (btn) {
+    event.preventDefault();
+    const token = btn.dataset.token || "";
+    const sessionNum = btn.dataset.session;
+    const code = btn.dataset.code;
+    const participant = participants.find((p) => String(p.participantCode) === String(code));
+    const session = (participant && (participant.sessions || []).find((s) => String(s.sessionNumber) === String(sessionNum))) || { token, sessionNumber: sessionNum };
+    const text = buildSessionEmail(participant || {}, session);
+    try {
+      await navigator.clipboard.writeText(text);
+      setManagementMessage("אימייל הועתק ללוח.");
+    } catch (err) {
+      setManagementMessage("שגיאה בהעתקת האימייל.", true);
+    }
+    return;
+  }
+
   const target = event.target;
   if (target && target.classList.contains("participant-link")) {
     event.preventDefault();
