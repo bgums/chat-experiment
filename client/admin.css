@@ -242,6 +242,22 @@ details.panel-card > summary h2 {
   font-size: 0.87rem;
 }
 
+/* Participant meta inputs displayed under participant code */
+.participant-meta-input {
+  display: block;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--admin-muted);
+  font-size: 0.82rem;
+  padding: 2px 0;
+  margin-top: 4px;
+  outline: none;
+}
+.participant-meta-input::placeholder {
+  color: rgba(91, 109, 122, 0.8);
+}
+
 .two-col {
   display: grid;
   grid-template-columns: 1fr;

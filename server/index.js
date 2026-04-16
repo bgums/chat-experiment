@@ -21,6 +21,7 @@ import {
   listParticipantFormResponses,
   listFormResponses,
   updateParticipantStatus,
+  updateParticipantMetadata,
   getSessionPersonas,
   resetSessionByToken,
   saveSessionPersonaConversationId,
@@ -923,6 +924,22 @@ app.delete("/api/admin/participant/:participantCode", async (req, res) => {
   } catch (error) {
     console.error("Failed to delete participant", error);
     return res.status(500).json({ error: error?.message || "Could not delete participant." });
+  }
+});
+
+app.post("/api/admin/participant/:participantId/metadata", async (req, res) => {
+  try {
+    const participantId = Number(req.params?.participantId || 0);
+    if (!participantId) return res.status(400).json({ error: "participantId is required." });
+
+    const subjectId = req.body?.subjectId == null ? null : String(req.body.subjectId);
+    const notes = req.body?.notes == null ? null : String(req.body.notes);
+
+    await updateParticipantMetadata(participantId, { subjectId, notes });
+    return res.json({ ok: true, participantId, subjectId, notes });
+  } catch (error) {
+    console.error("Failed to update participant metadata", error);
+    return res.status(500).json({ error: error?.message || "Could not update participant metadata." });
   }
 });
 

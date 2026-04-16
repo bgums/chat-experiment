@@ -23,6 +23,45 @@ const participantSessionDetails = document.getElementById("participant-session-d
 let participants = [];
 let chartInstances = [];
 let currentParticipantDetails = null;
+const _saveTimers = new Map();
+
+async function saveParticipantMetadata(participantId, subjectId, notes) {
+  try {
+    const response = await fetch(`/api/admin/participant/${encodeURIComponent(participantId)}/metadata`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ subjectId: subjectId || null, notes: notes || null })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      console.error("Failed to save participant metadata", payload);
+      setManagementMessage(payload?.error || "שגיאה בשמירת נתונים.", true);
+      return false;
+    }
+
+    const p = participants.find((x) => Number(x.id) === Number(participantId));
+    if (p) {
+      p.subjectId = subjectId || null;
+      p.notes = notes || null;
+    }
+    return true;
+  } catch (err) {
+    console.error("Failed to save participant metadata", err);
+    setManagementMessage("שגיאה בשמירת נתונים.", true);
+    return false;
+  }
+}
+
+function scheduleSaveForInput(participantId, getValuesFn) {
+  const key = String(participantId);
+  if (_saveTimers.has(key)) clearTimeout(_saveTimers.get(key));
+  const t = setTimeout(async () => {
+    _saveTimers.delete(key);
+    const { subjectId, notes } = getValuesFn();
+    await saveParticipantMetadata(participantId, subjectId, notes);
+  }, 700);
+  _saveTimers.set(key, t);
+}
 
 function escapeHtml(text) {
   if (text == null) return "";
@@ -118,7 +157,7 @@ function renderSubjectsPanel() {
 
       rows.push(`
         <tr>
-          ${idx === 0 ? `<td rowspan="${sessions.length}"><a href="#" class="id-link participant-link" data-code="${escapeHtml(participant.participantCode)}">${escapeHtml(participant.participantCode)}</a><div class="small-muted">id: ${escapeHtml(participant.id)}</div></td>` : ""}
+          ${idx === 0 ? `<td rowspan="${sessions.length}"><a href="#" class="id-link participant-link" data-code="${escapeHtml(participant.participantCode)}">${escapeHtml(participant.participantCode)}</a><input class="participant-meta-input subject-id-input" data-id="${escapeHtml(participant.id)}" placeholder="מזהה נבדק" value="${escapeHtml(participant.subjectId || '')}"><input class="participant-meta-input subject-notes-input" data-id="${escapeHtml(participant.id)}" placeholder="הערות" value="${escapeHtml(participant.notes || '')}"></td>` : ""}
           ${idx === 0 ? `<td rowspan="${sessions.length}">${escapeHtml(participant.groupAssignment || "")}</td>` : ""}
           <td>${escapeHtml(session.sessionNumber)}</td>
           <td>${escapeHtml(formatDateTime(session.consentCompletedAt))}</td>
@@ -653,6 +692,24 @@ subjectsPanel?.addEventListener("click", async (event) => {
     event.preventDefault();
     await openParticipantModal(target.dataset.code);
   }
+});
+
+subjectsPanel?.addEventListener("input", (event) => {
+  const target = event.target;
+  if (!target) return;
+  const isSubject = target.classList && (target.classList.contains("subject-id-input") || target.classList.contains("subject-notes-input"));
+  if (!isSubject) return;
+
+  const td = target.closest && target.closest('td');
+  const participantId = target.dataset.id || (td && td.querySelector && td.querySelector('.subject-id-input')?.dataset?.id) || null;
+  if (!participantId) return;
+
+  scheduleSaveForInput(participantId, () => {
+    const cell = td || document.querySelector(`.subject-id-input[data-id="${participantId}"]`)?.closest('td');
+    const subj = cell ? (cell.querySelector('.subject-id-input')?.value || '') : (document.querySelector(`.subject-id-input[data-id="${participantId}"]`)?.value || '');
+    const notes = cell ? (cell.querySelector('.subject-notes-input')?.value || '') : (document.querySelector(`.subject-notes-input[data-id="${participantId}"]`)?.value || '');
+    return { subjectId: subj, notes };
+  });
 });
 
 messageSessionFilter?.addEventListener("change", () => {

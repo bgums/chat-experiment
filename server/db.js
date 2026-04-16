@@ -41,6 +41,8 @@ function createDatabase() {
       CREATE TABLE IF NOT EXISTS participants (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         participant_code TEXT UNIQUE NOT NULL,
+        subject_id TEXT,
+        notes TEXT,
         total_sessions INTEGER DEFAULT 4,
         group_assignment TEXT DEFAULT 'experimental',
         reading_order TEXT DEFAULT 'withdrawal_first',
@@ -141,6 +143,12 @@ function createDatabase() {
     ensureColumnExists(db, "participants", "reading_order", "TEXT DEFAULT 'withdrawal_first'").catch((err) =>
       console.error("Failed to add reading_order column", err)
     );
+    ensureColumnExists(db, "participants", "subject_id", "TEXT").catch((err) =>
+      console.error("Failed to add subject_id column", err)
+    );
+    ensureColumnExists(db, "participants", "notes", "TEXT").catch((err) =>
+      console.error("Failed to add notes column", err)
+    );
     ensureColumnExists(db, "messages", "session_persona_id", "INTEGER").catch((err) =>
       console.error("Failed to add session_persona_id column", err)
     );
@@ -207,6 +215,8 @@ export function listParticipants() {
   const db = getDb();
   const query = `
     SELECT p.id AS participant_id,
+      p.subject_id,
+      p.notes,
       p.participant_code,
       p.status,
       p.total_sessions,
@@ -251,6 +261,8 @@ export function listParticipants() {
             id: row.participant_id,
             participantCode: row.participant_code,
             status: row.status,
+            subjectId: row.subject_id || null,
+            notes: row.notes || null,
             groupAssignment: row.group_assignment,
             readingOrder: row.reading_order,
             createdAt: row.created_at,
@@ -281,6 +293,20 @@ export function listParticipants() {
 
       resolve(Array.from(participantsById.values()));
     });
+  });
+}
+
+export function updateParticipantMetadata(participantId, { subjectId = null, notes = null } = {}) {
+  const db = getDb();
+  return new Promise((resolve, reject) => {
+    db.run(
+      "UPDATE participants SET subject_id = ?, notes = ? WHERE id = ?",
+      [subjectId, notes, participantId],
+      function onUpdate(err) {
+        if (err) return reject(err);
+        resolve(true);
+      }
+    );
   });
 }
 
