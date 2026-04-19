@@ -66,6 +66,7 @@ const feedbackInstructions = fs.readFileSync(feedbackInstructionsPath, "utf-8");
 const CHAT_DURATION_MINUTES = 8;
 const CHAT_DURATION_MS = CHAT_DURATION_MINUTES * 60 * 1000;
 const CONSENT_LOCK_WINDOW_MS = 60 * 60 * 1000;
+const SESSION_SCHEDULE_LOCK_WINDOW_MS = 24 * 60 * 60 * 1000;
 const MID_PROMPT_MINUTES = 9;
 const MID_PROMPT_MS = MID_PROMPT_MINUTES * 60 * 1000;
 const CHAT_MAX_OUTPUT_TOKENS = Math.max(1, Number(process.env.OPENAI_CHAT_MAX_OUTPUT_TOKENS || 500));
@@ -546,6 +547,20 @@ async function getSessionLockState(session) {
 
   if (session.sessionStatus === "completed" || session.completedAt) {
     return { locked: true, reason: "Session flow is complete.", code: "session_completed" };
+  }
+
+  if (session.scheduledFor) {
+    const scheduledMs = new Date(session.scheduledFor).getTime();
+    if (!Number.isNaN(scheduledMs)) {
+      const elapsedSinceSchedule = Date.now() - scheduledMs;
+      if (elapsedSinceSchedule > SESSION_SCHEDULE_LOCK_WINDOW_MS) {
+        return {
+          locked: true,
+          reason: "More than 24 hours passed since this session's scheduled time.",
+          code: "scheduled_time_expired"
+        };
+      }
+    }
   }
 
   const forms = await listFormResponses({

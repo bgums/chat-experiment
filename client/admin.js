@@ -44,6 +44,12 @@ async function saveParticipantMetadata(participantId, subjectId, notes, schedule
       p.subjectId = subjectId || null;
       p.notes = notes || null;
       p.scheduleStart = scheduleStart == null ? null : scheduleStart;
+      if (Array.isArray(p.sessions)) {
+        p.sessions = p.sessions.map((session) => ({
+          ...session,
+          scheduledFor: computeSessionScheduledFor(p.scheduleStart, session.sessionNumber)
+        }));
+      }
     }
     return true;
   } catch (err) {
@@ -94,6 +100,14 @@ function formatDateTime(value) {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return String(value);
   return parsed.toLocaleString("he-IL");
+}
+
+function computeSessionScheduledFor(scheduleStart, sessionNumber) {
+  if (!scheduleStart) return null;
+  const base = new Date(scheduleStart);
+  if (Number.isNaN(base.getTime())) return null;
+  const offsetDays = Math.max(0, Number(sessionNumber) - 1) * 7;
+  return new Date(base.getTime() + offsetDays * 24 * 60 * 60 * 1000).toISOString();
 }
 
 function computeStatus(session) {
@@ -171,20 +185,9 @@ function renderSubjectsPanel() {
         personaDisplay = `${half.charAt(0).toUpperCase() + half.slice(1)}`;
       }
 
-      // compute scheduled time for this session (session 1 = participant.scheduleStart)
-      let scheduledForSession = "";
-      try {
-        if (participant.scheduleStart) {
-          const base = new Date(participant.scheduleStart);
-          if (!Number.isNaN(base.getTime())) {
-            const offsetDays = (Number(session.sessionNumber) - 1) * 7;
-            const scheduled = new Date(base.getTime() + offsetDays * 24 * 60 * 60 * 1000);
-            scheduledForSession = formatDateTime(scheduled.toISOString());
-          }
-        }
-      } catch (err) {
-        scheduledForSession = "";
-      }
+      const scheduledForSession = formatDateTime(
+        session.scheduledFor || computeSessionScheduledFor(participant.scheduleStart, session.sessionNumber)
+      );
 
       rows.push(`
         <tr>
@@ -529,21 +532,9 @@ function renderSessionDetails(details, selectedSession = "all") {
 
   const content = filtered.map((bucket) => {
     const status = computeStatus(bucket.session || {});
-    // compute scheduled time for this session based on participant.scheduleStart
-    let scheduledForSession = "";
-    try {
-      const participantSchedule = details?.participant?.scheduleStart || null;
-      if (participantSchedule) {
-        const base = new Date(participantSchedule);
-        if (!Number.isNaN(base.getTime())) {
-          const offsetDays = (Number(bucket.sessionNumber) - 1) * 7;
-          const scheduled = new Date(base.getTime() + offsetDays * 24 * 60 * 60 * 1000);
-          scheduledForSession = formatDateTime(scheduled.toISOString());
-        }
-      }
-    } catch (err) {
-      scheduledForSession = "";
-    }
+    const scheduledForSession = formatDateTime(
+      bucket.session?.scheduledFor || computeSessionScheduledFor(details?.participant?.scheduleStart || null, bucket.sessionNumber)
+    );
 
     const formsHtml = bucket.forms.length
       ? bucket.forms.map((form) => {

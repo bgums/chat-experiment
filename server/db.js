@@ -33,6 +33,53 @@ function ensureDirectoryExists(filePath) {
   }
 }
 
+function computeSessionScheduledFor(scheduleStart, sessionNumber) {
+  if (!scheduleStart) return null;
+  const base = new Date(scheduleStart);
+  if (Number.isNaN(base.getTime())) return null;
+  const offsetDays = Math.max(0, Number(sessionNumber) - 1) * 7;
+  return new Date(base.getTime() + offsetDays * 24 * 60 * 60 * 1000).toISOString();
+}
+
+function syncSessionSchedulesForParticipant(db, participantId, scheduleStart) {
+  return new Promise((resolve, reject) => {
+    db.all(
+      "SELECT id, session_number FROM sessions WHERE participant_id = ? ORDER BY session_number ASC",
+      [participantId],
+      (selectErr, rows) => {
+        if (selectErr) return reject(selectErr);
+
+        const sessions = rows || [];
+        if (!sessions.length) return resolve(true);
+
+        const stmt = db.prepare("UPDATE sessions SET scheduled_for = ? WHERE id = ?");
+        let pending = sessions.length;
+        let failed = false;
+
+        sessions.forEach((row) => {
+          const scheduledFor = computeSessionScheduledFor(scheduleStart, row.session_number);
+          stmt.run([scheduledFor, row.id], (updateErr) => {
+            if (failed) return;
+            if (updateErr) {
+              failed = true;
+              stmt.finalize(() => reject(updateErr));
+              return;
+            }
+
+            pending -= 1;
+            if (pending === 0) {
+              stmt.finalize((finalizeErr) => {
+                if (finalizeErr) return reject(finalizeErr);
+                resolve(true);
+              });
+            }
+          });
+        });
+      }
+    );
+  });
+}
+
 function createDatabase() {
   ensureDirectoryExists(DB_PATH);
   const db = new sqlite3.Database(DB_PATH);
@@ -60,6 +107,7 @@ function createDatabase() {
         session_token TEXT UNIQUE NOT NULL,
         status TEXT DEFAULT 'pending',
         conversation_id TEXT,
+        scheduled_for TEXT,
         started_at TEXT,
         completed_at TEXT,
         FOREIGN KEY(participant_id) REFERENCES participants(id)
@@ -162,6 +210,26 @@ function createDatabase() {
     ensureColumnExists(db, "form_responses", "session_persona_id", "INTEGER").catch((err) =>
       console.error("Failed to add session_persona_id column to form_responses", err)
     );
+    ensureColumnExists(db, "sessions", "scheduled_for", "TEXT")
+      .then(() => {
+        db.all(
+          "SELECT id, schedule_start FROM participants",
+          [],
+          (selectErr, participants) => {
+            if (selectErr) {
+              console.error("Failed to load participants for schedule backfill", selectErr);
+              return;
+            }
+
+            (participants || []).forEach((participant) => {
+              syncSessionSchedulesForParticipant(db, participant.id, participant.schedule_start).catch((err) =>
+                console.error(`Failed to backfill session schedule for participant ${participant.id}`, err)
+              );
+            });
+          }
+        );
+      })
+      .catch((err) => console.error("Failed to add scheduled_for column", err));
   });
   return db;
 }
@@ -232,6 +300,7 @@ export function listParticipants() {
       s.session_number,
       s.session_token,
       s.status AS session_status,
+      s.scheduled_for,
       s.started_at,
       s.completed_at,
       consent.consent_completed_at,
@@ -289,6 +358,7 @@ export function listParticipants() {
             sessionNumber: row.session_number,
             token: row.session_token,
             status: sessionStatus,
+            scheduledFor: row.scheduled_for || null,
             startedAt: row.started_at,
             completedAt: row.completed_at,
             consentCompletedAt: row.consent_completed_at,
@@ -308,9 +378,14 @@ export function updateParticipantMetadata(participantId, { subjectId = null, not
     db.run(
       "UPDATE participants SET subject_id = ?, notes = ?, schedule_start = ? WHERE id = ?",
       [subjectId, notes, scheduleStart, participantId],
-      function onUpdate(err) {
+      async function onUpdate(err) {
         if (err) return reject(err);
-        resolve(true);
+        try {
+          await syncSessionSchedulesForParticipant(db, participantId, scheduleStart);
+          resolve(true);
+        } catch (syncErr) {
+          reject(syncErr);
+        }
       }
     );
   });
@@ -322,6 +397,7 @@ export function listSessionsByParticipant(participantId) {
       SELECT s.id AS sessionId,
         s.session_number AS sessionNumber,
         s.status AS status,
+        s.scheduled_for AS scheduledFor,
         s.started_at AS startedAt,
         s.completed_at AS completedAt,
            consent.consent_completed_at AS consentCompletedAt,
@@ -371,7 +447,7 @@ export function getSessionByToken(sessionToken) {
   const db = getDb();
   const query = `
     SELECT s.id AS session_id, s.session_number, s.status AS session_status, s.conversation_id,
-          s.started_at, s.completed_at, p.id AS participant_id, p.participant_code, p.total_sessions, p.status AS participant_status,
+          s.scheduled_for, s.started_at, s.completed_at, p.id AS participant_id, p.participant_code, p.total_sessions, p.status AS participant_status,
           p.group_assignment, p.reading_order
     FROM sessions s
     JOIN participants p ON p.id = s.participant_id
@@ -389,6 +465,7 @@ export function getSessionByToken(sessionToken) {
         sessionNumber: row.session_number,
         sessionStatus: row.session_status,
         conversationId: row.conversation_id,
+        scheduledFor: row.scheduled_for || null,
         startedAt: row.started_at,
         completedAt: row.completed_at,
         participantId: row.participant_id,
