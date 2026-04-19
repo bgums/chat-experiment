@@ -4,6 +4,9 @@ const groupSelect = document.getElementById("group-select");
 const createParticipantForm = document.getElementById("create-participant-form");
 const resetSessionForm = document.getElementById("reset-session-form");
 const resetSessionTokenInput = document.getElementById("reset-session-token");
+const scheduleLockForm = document.getElementById("schedule-lock-form");
+const scheduleLockTokenInput = document.getElementById("schedule-lock-token");
+const scheduleLockModeSelect = document.getElementById("schedule-lock-mode");
 const deleteParticipantForm = document.getElementById("delete-participant-form");
 const deleteParticipantCodeInput = document.getElementById("delete-participant-code");
 const managementResult = document.getElementById("management-result");
@@ -198,6 +201,7 @@ function renderSubjectsPanel() {
           ${idx === 0 ? `<td rowspan="${sessions.length}">${escapeHtml(participant.groupAssignment || "")}</td>` : ""}
           <td>${escapeHtml(session.sessionNumber)}</td>
           <td>${escapeHtml(scheduledForSession)}</td>
+          <td>${session.scheduleLockDisabled ? "כבויה" : "פעילה"}</td>
           <td>${escapeHtml(formatDateTime(session.consentCompletedAt))}</td>
           <td>${renderStatus(status)}</td>
           <td>${escapeHtml(personaDisplay || "-")}</td>
@@ -216,6 +220,7 @@ function renderSubjectsPanel() {
           <th>Group</th>
           <th>Session</th>
             <th>Scheduled Time</th>
+            <th>24h Lock</th>
             <th>Session Start Time</th>
           <th>Status</th>
           <th>Personas</th>
@@ -256,14 +261,9 @@ function buildSessionEmail(participant, session) {
   return body;
 }
 
-function renderProblemsPanel(rows) {
+function renderProblemsPanel(incompleteRows, lockDisabledRows) {
   if (!problemsPanel) return;
-  if (!rows?.length) {
-    problemsPanel.innerHTML = "<div class='small-muted'>אין כרגע מפגשים לא שלמים.</div>";
-    return;
-  }
-
-  const tableRows = rows.map((row) => `
+  const incompleteTableRows = (incompleteRows || []).map((row) => `
     <tr>
       <td>${escapeHtml(row.participantCode)}</td>
       <td>${escapeHtml(row.participantId)}</td>
@@ -273,19 +273,61 @@ function renderProblemsPanel(rows) {
     </tr>
   `).join("");
 
+  const lockDisabledTableRows = (lockDisabledRows || []).map((row) => `
+    <tr>
+      <td>${escapeHtml(row.participantCode)}</td>
+      <td>${escapeHtml(row.participantId)}</td>
+      <td>${escapeHtml(row.sessionNumber)}</td>
+      <td>${escapeHtml(row.sessionToken)}</td>
+      <td>${escapeHtml(formatDateTime(row.scheduledFor))}</td>
+      <td>${escapeHtml(row.sessionStatus || "pending")}</td>
+    </tr>
+  `).join("");
+
+  const incompleteTableHtml = (incompleteRows && incompleteRows.length)
+    ? `
+      <table class="admin-table">
+        <thead>
+          <tr>
+            <th>participant_code</th>
+            <th>participant_id</th>
+            <th>session</th>
+            <th>session token</th>
+            <th>session start time</th>
+          </tr>
+        </thead>
+        <tbody>${incompleteTableRows}</tbody>
+      </table>
+    `
+    : "<div class='small-muted'>אין כרגע מפגשים לא שלמים.</div>";
+
+  const lockDisabledTableHtml = (lockDisabledRows && lockDisabledRows.length)
+    ? `
+      <table class="admin-table">
+        <thead>
+          <tr>
+            <th>participant_code</th>
+            <th>participant_id</th>
+            <th>session</th>
+            <th>session token</th>
+            <th>scheduled_for</th>
+            <th>status</th>
+          </tr>
+        </thead>
+        <tbody>${lockDisabledTableRows}</tbody>
+      </table>
+    `
+    : "<div class='small-muted'>אין כרגע מפגשים עם נעילת לו\"ז כבויה.</div>";
+
   problemsPanel.innerHTML = `
-    <table class="admin-table">
-      <thead>
-        <tr>
-          <th>participant_code</th>
-          <th>participant_id</th>
-          <th>session</th>
-          <th>session token</th>
-          <th>session start time</th>
-        </tr>
-      </thead>
-      <tbody>${tableRows}</tbody>
-    </table>
+    <div style="margin-bottom:12px;">
+      <h3 style="margin:0 0 8px;">Incomplete Sessions (&gt; 1h since consent)</h3>
+      ${incompleteTableHtml}
+    </div>
+    <div>
+      <h3 style="margin:0 0 8px;">Schedule Lock Disabled Sessions</h3>
+      ${lockDisabledTableHtml}
+    </div>
   `;
 }
 
@@ -463,10 +505,17 @@ async function loadParticipants() {
 }
 
 async function loadIncompleteSessions() {
-  const response = await fetch("/api/admin/problems/incomplete-sessions");
-  if (!response.ok) throw new Error("Failed to load problems");
-  const data = await response.json();
-  renderProblemsPanel(data.sessions || []);
+  const [incompleteResponse, lockDisabledResponse] = await Promise.all([
+    fetch("/api/admin/problems/incomplete-sessions"),
+    fetch("/api/admin/problems/lock-disabled-sessions")
+  ]);
+  if (!incompleteResponse.ok || !lockDisabledResponse.ok) throw new Error("Failed to load problems");
+
+  const [incompleteData, lockDisabledData] = await Promise.all([
+    incompleteResponse.json(),
+    lockDisabledResponse.json()
+  ]);
+  renderProblemsPanel(incompleteData.sessions || [], lockDisabledData.sessions || []);
 }
 
 async function loadQaDistribution() {
@@ -631,6 +680,24 @@ async function resetSessionByToken(token) {
   setManagementMessage(`אופס מפגש ${payload.sessionNumber} עבור ${payload.participantCode}`);
 }
 
+async function updateScheduleLockByToken(token, scheduleLockDisabled) {
+  if (!token) return;
+  const response = await fetch("/api/admin/session/schedule-lock", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token, scheduleLockDisabled })
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload?.error || "שגיאה בעדכון נעילת הלו\"ז.");
+  }
+
+  const stateText = payload?.scheduleLockDisabled
+    ? "הנעילה האוטומטית אחרי 24 שעות כבויה"
+    : "הנעילה האוטומטית אחרי 24 שעות פעילה";
+  setManagementMessage(`Session ${escapeHtml(payload.sessionNumber)} (${escapeHtml(payload.participantCode)}): ${stateText}`, false, true);
+}
+
 async function loadSessionOptions() {
   if (!groupSelect) return;
   const response = await fetch("/api/admin/session-options");
@@ -684,6 +751,24 @@ resetSessionForm?.addEventListener("submit", async (event) => {
     await refreshAllPanels();
   } catch (error) {
     setManagementMessage(error.message || "שגיאה באיפוס.", true);
+  }
+});
+
+scheduleLockForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const token = (scheduleLockTokenInput?.value || "").trim();
+  if (!token) {
+    setManagementMessage("יש להזין session token.", true);
+    return;
+  }
+
+  const scheduleLockDisabled = (scheduleLockModeSelect?.value || "disable") === "disable";
+  try {
+    await updateScheduleLockByToken(token, scheduleLockDisabled);
+    if (scheduleLockTokenInput) scheduleLockTokenInput.value = "";
+    await refreshAllPanels();
+  } catch (error) {
+    setManagementMessage(error.message || "שגיאה בעדכון נעילת הלו\"ז.", true);
   }
 });
 

@@ -34,8 +34,10 @@ import {
   saveModuleQuestionResponse,
   listModuleQuestionResponses,
   listIncompleteSessionsForAdmin,
+  listScheduleLockDisabledSessionsForAdmin,
   listPersonaSessionDistribution,
-  deleteParticipantByCode
+  deleteParticipantByCode,
+  updateSessionScheduleLockByToken
 } from "./db.js";
 import { ensureSessionPersonas, buildPersonaPrompt } from "./utils/personaLoader.js";
 
@@ -556,7 +558,7 @@ async function getSessionLockState(session) {
     return { locked: true, reason: "Session flow is complete.", code: "session_completed" };
   }
 
-  if (session.scheduledFor) {
+  if (session.scheduledFor && !session.scheduleLockDisabled) {
     const scheduledMs = new Date(session.scheduledFor).getTime();
     if (!Number.isNaN(scheduledMs)) {
       const elapsedSinceSchedule = Date.now() - scheduledMs;
@@ -818,6 +820,31 @@ app.post("/api/admin/session/reset", async (req, res) => {
   }
 });
 
+app.post("/api/admin/session/schedule-lock", async (req, res) => {
+  try {
+    const token = String(req.body?.token || "").trim();
+    if (!token) {
+      return res.status(400).json({ error: "Session token is required." });
+    }
+
+    const scheduleLockDisabled = Boolean(req.body?.scheduleLockDisabled);
+    const updated = await updateSessionScheduleLockByToken(token, scheduleLockDisabled);
+    if (!updated) {
+      return res.status(404).json({ error: "Session not found for token." });
+    }
+
+    return res.json({
+      ok: true,
+      participantCode: updated.participantCode,
+      sessionNumber: updated.sessionNumber,
+      scheduleLockDisabled: updated.scheduleLockDisabled
+    });
+  } catch (error) {
+    console.error("Failed to update session schedule-lock override", error);
+    return res.status(500).json({ error: error?.message || "Could not update session schedule-lock override." });
+  }
+});
+
 app.get("/api/admin/participant/:participantCode/messages", async (req, res) => {
   try {
     const { participantCode } = req.params;
@@ -892,6 +919,16 @@ app.get("/api/admin/problems/incomplete-sessions", async (_req, res) => {
   } catch (error) {
     console.error("Failed to load incomplete sessions", error);
     return res.status(500).json({ error: error?.message || "Could not load incomplete sessions." });
+  }
+});
+
+app.get("/api/admin/problems/lock-disabled-sessions", async (_req, res) => {
+  try {
+    const sessions = await listScheduleLockDisabledSessionsForAdmin();
+    return res.json({ sessions });
+  } catch (error) {
+    console.error("Failed to load lock-disabled sessions", error);
+    return res.status(500).json({ error: error?.message || "Could not load lock-disabled sessions." });
   }
 });
 
