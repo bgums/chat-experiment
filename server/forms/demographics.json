@@ -3,14 +3,14 @@
   "title": "שאלון רקע",
   "intro": "אנא ענו כמיטב יכולתכם",
   "items": [
-    { "id": "age", "type": "number", "prompt": "גיל", "required": false },
-    { "id": "gender", "type": "single", "prompt": "מהי הלשון המגדרית איתה את/ה מזדהה?", "options": ["את/היא", "אתה/הוא", "אתם/הם"], "required": false },
-    { "id": "education", "type": "single", "prompt": "מהי רמת ההשכלה שלך?", "options": ["תיכון", "סטודנט לתואר ראשון", "תואר ראשון","סטודנט לתואר שני","תואר שני ומעלה"], "required": false },
-    { "id": "relationship", "type": "single", "prompt": "מצב משפחתי", "options": ["רווק/ה", "נשוי/אה", "גרוש/ה", "אלמן/ה", "אחר"], "required": false },
-    { "id": "in_therapy", "type": "single", "prompt": "כמה שנים בחייך היית בטיפול פסיכולוגי?", "options": ["מעולם לא","פחות משנה", "1-2 שנים", "3-5 שנים", "יותר מ-5 שנים"], "required": false },
-    { "id": "therapist_experience", "type": "single", "prompt": "כמה שנות ניסיון יש לך כמטפל/ת?", "options": [ "מעולם לא טיפלתי","פחות משנה", "1-2 שנים", "3-5 שנים", "יותר מ-5 שנים"], "required": false },
-    { "id": "general_experience", "type": "single", "prompt": "כמה שנים יצא לך לעבוד עם אוכלוסיות קליניות שלא כחלק מטיפול פסיכולוגי?", "options": ["מעולם לא","פחות משנה", "1-2 שנים", "3-5 שנים", "יותר מ-5 שנים"], "required": false },
-    { "id": "clinical_interest", "type": "likert", "prompt": "באיזו מידה עולם הפסיכולוגיה הקלינית והטיפול מעניין אותך?", "scale": [1, 5], "labels": { "1": "במידה מועטה מאוד","2": "במידה מועטה", "3": "במידה בינונית", "4": "במידה רבה", "5": "במידה רבה מאוד" }, "default": 3, "required": false },
-    { "id": "clinical_ambition", "type": "likert", "prompt": "האם את/ה שואפ/ת להיות מטפל/ת בהמשך חייך?", "scale": [1, 5], "labels": { "1": "במידה מועטה מאוד","2": "במידה מועטה", "3": "במידה בינונית", "4": "במידה רבה", "5": "במידה רבה מאוד" }, "default": 3, "required": false },
-    { "id": "open_notes", "type": "text", "prompt": "האם יש דבר מה שתרצה/י לשתף לפני תחילת המפגש?", "required": false }  ]
+    { "id": "age", "type": "number", "prompt": "גיל", "required": true },
+    { "id": "gender", "type": "single", "prompt": "מהו המגדר שלך?", "options": ["נקבה", "זכר", "אחר"], "required": true },
+    { "id": "education", "type": "single", "prompt": "מהי רמת ההשכלה שלך?", "options": ["תיכון", "סטודנט לתואר ראשון", "תואר ראשון","סטודנט לתואר שני","תואר שני ומעלה"], "required": true },
+    { "id": "relationship", "type": "single", "prompt": "מצב משפחתי", "options": ["רווק/ה", "נשוי/אה", "גרוש/ה", "אלמן/ה", "אחר"], "required": true },
+    { "id": "adhd", "type": "single", "prompt": "האם אובחנת בעבר ב-ADHD?", "options": ["כן", "לא"], "required": true },
+    { "id": "in_therapy", "type": "single", "prompt": "כמה שנים בחייך היית בטיפול פסיכולוגי?", "options": ["מעולם לא","פחות משנה", "1-2 שנים", "3-5 שנים", "יותר מ-5 שנים"], "required": true },
+    { "id": "therapist_experience", "type": "single", "prompt": "כמה שנות ניסיון יש לך כמטפל/ת?", "options": [ "מעולם לא טיפלתי","פחות משנה", "1-2 שנים", "3-5 שנים", "יותר מ-5 שנים"], "required": true },
+    { "id": "general_experience", "type": "single", "prompt": "כמה שנים יצא לך לעבוד עם אוכלוסיות קליניות שלא כחלק מטיפול פסיכולוגי?", "options": ["מעולם לא","פחות משנה", "1-2 שנים", "3-5 שנים", "יותר מ-5 שנים"], "required": true },
+    { "id": "clinical_interest", "type": "likert", "prompt": "באיזו מידה עולם הפסיכולוגיה הקלינית והטיפול מעניין אותך?", "scale": [1, 5], "labels": { "1": "במידה מועטה מאוד","2": "במידה מועטה", "3": "במידה בינונית", "4": "במידה רבה", "5": "במידה רבה מאוד" }, "default": 3, "required": true },
+    { "id": "clinical_ambition", "type": "likert", "prompt": "האם את/ה שואפ/ת להיות מטפל/ת בהמשך חייך?", "scale": [1, 5], "labels": { "1": "במידה מועטה מאוד","2": "במידה מועטה", "3": "במידה בינונית", "4": "במידה רבה", "5": "במידה רבה מאוד" }, "default": 3, "required": true } ]
 }

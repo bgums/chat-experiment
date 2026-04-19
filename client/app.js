@@ -656,7 +656,7 @@ function renderForm(formDef, step = {}, savedResponses = {}) {
       if (type === "multi") {
         const checkedBoxes = Array.from(formEl.querySelectorAll(`input[name="${id}[]"]:checked`));
         const values = checkedBoxes.map((c) => c.value);
-        if (!values.length) missing.push(item.prompt || id);
+        if (item.required && !values.length) missing.push(item.prompt || id);
         responses[id] = values;
         return;
       }
