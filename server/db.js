@@ -3,6 +3,7 @@ import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
 import { randomUUID } from "crypto";
+import { nowGmtPlus3Iso, toGmtPlus3Iso } from "./utils/timezone.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -38,7 +39,7 @@ function computeSessionScheduledFor(scheduleStart, sessionNumber) {
   const base = new Date(scheduleStart);
   if (Number.isNaN(base.getTime())) return null;
   const offsetDays = Math.max(0, Number(sessionNumber) - 1) * 7;
-  return new Date(base.getTime() + offsetDays * 24 * 60 * 60 * 1000).toISOString();
+  return toGmtPlus3Iso(new Date(base.getTime() + offsetDays * 24 * 60 * 60 * 1000));
 }
 
 function syncSessionSchedulesForParticipant(db, participantId, scheduleStart) {
@@ -248,6 +249,7 @@ export function createInvite({ groupAssignment = "experimental", readingOrder = 
   const db = getDb();
   const participantCode = randomUUID();
   const totalSessions = 4;
+  const createdAt = nowGmtPlus3Iso();
   const normalizedGroup = groupAssignment === "control" ? "control" : "experimental";
   const normalizedReadingOrder = readingOrder === "confrontation_first"
     ? "confrontation_first"
@@ -255,8 +257,8 @@ export function createInvite({ groupAssignment = "experimental", readingOrder = 
 
   return new Promise((resolve, reject) => {
     db.run(
-      "INSERT INTO participants (participant_code, total_sessions, group_assignment, reading_order) VALUES (?, ?, ?, ?)",
-      [participantCode, totalSessions, normalizedGroup, normalizedReadingOrder],
+      "INSERT INTO participants (participant_code, total_sessions, group_assignment, reading_order, created_at) VALUES (?, ?, ?, ?, ?)",
+      [participantCode, totalSessions, normalizedGroup, normalizedReadingOrder, createdAt],
       function insertParticipant(err) {
         if (err) return reject(err);
 
@@ -488,10 +490,11 @@ export function getSessionByToken(sessionToken) {
 
 export function markSessionStarted(sessionId) {
   const db = getDb();
+  const startedAt = nowGmtPlus3Iso();
   return new Promise((resolve, reject) => {
     db.run(
-      "UPDATE sessions SET status = 'in_progress', started_at = COALESCE(started_at, CURRENT_TIMESTAMP) WHERE id = ?",
-      [sessionId],
+      "UPDATE sessions SET status = 'in_progress', started_at = COALESCE(started_at, ?) WHERE id = ?",
+      [startedAt, sessionId],
       function updateErr(err) {
         if (err) return reject(err);
         resolve(true);
@@ -502,10 +505,11 @@ export function markSessionStarted(sessionId) {
 
 export function markSessionCompleted(sessionId) {
   const db = getDb();
+  const completedAt = nowGmtPlus3Iso();
   return new Promise((resolve, reject) => {
     db.run(
-      "UPDATE sessions SET status = 'completed', completed_at = COALESCE(completed_at, CURRENT_TIMESTAMP) WHERE id = ?",
-      [sessionId],
+      "UPDATE sessions SET status = 'completed', completed_at = COALESCE(completed_at, ?) WHERE id = ?",
+      [completedAt, sessionId],
       function updateErr(err) {
         if (err) return reject(err);
         resolve(true);
@@ -516,7 +520,7 @@ export function markSessionCompleted(sessionId) {
 
 export function savePersonaMessage({ participantId, sessionNumber, role, content, sessionPersonaId, conversationId, timestampIso = null }) {
   const db = getDb();
-  const createdAt = timestampIso || new Date().toISOString();
+  const createdAt = timestampIso || nowGmtPlus3Iso();
   return new Promise((resolve, reject) => {
     db.run(
       "INSERT INTO messages (participant_id, session_number, role, content, session_persona_id, conversation_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -532,6 +536,7 @@ export function savePersonaMessage({ participantId, sessionNumber, role, content
 export function saveFormResponse({ participantId, sessionNumber, formKey, responses, sessionPersonaId = null }) {
   const db = getDb();
   const payload = JSON.stringify(responses ?? {});
+  const createdAt = nowGmtPlus3Iso();
   return new Promise((resolve, reject) => {
     // For the consent form we want to preserve the original completion timestamp.
     // If a consent response already exists for this participant/session (and persona if provided),
@@ -556,8 +561,8 @@ export function saveFormResponse({ participantId, sessionNumber, formKey, respon
 
         // No existing consent row: insert new record
         db.run(
-          "INSERT INTO form_responses (participant_id, session_number, form_key, responses_json, session_persona_id) VALUES (?, ?, 'consent', ?, ?)",
-          [participantId, sessionNumber, payload, sessionPersonaId],
+          "INSERT INTO form_responses (participant_id, session_number, form_key, responses_json, session_persona_id, created_at) VALUES (?, ?, 'consent', ?, ?, ?)",
+          [participantId, sessionNumber, payload, sessionPersonaId, createdAt],
           function onInsert(err) {
             if (err) return reject(err);
             resolve(this.lastID);
@@ -573,8 +578,8 @@ export function saveFormResponse({ participantId, sessionNumber, formKey, respon
       db.run(deleteSql, [participantId, sessionNumber, formKey, sessionPersonaId], (delErr) => {
         if (delErr) return reject(delErr);
         db.run(
-          "INSERT INTO form_responses (participant_id, session_number, form_key, responses_json, session_persona_id) VALUES (?, ?, ?, ?, ?)",
-          [participantId, sessionNumber, formKey, payload, sessionPersonaId],
+          "INSERT INTO form_responses (participant_id, session_number, form_key, responses_json, session_persona_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+          [participantId, sessionNumber, formKey, payload, sessionPersonaId, createdAt],
           function onInsert(err) {
             if (err) return reject(err);
             resolve(this.lastID);
@@ -606,7 +611,7 @@ export function createSessionPersonas({ sessionId, participantId, sessionNumber,
   const db = getDb();
   return new Promise((resolve, reject) => {
     const stmt = db.prepare(
-      `INSERT INTO session_personas (session_id, participant_id, session_number, persona_csv_id, persona_order, persona_name, persona_json) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO session_personas (session_id, participant_id, session_number, persona_csv_id, persona_order, persona_name, persona_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const created = [];
     personas.forEach((persona) => {
@@ -618,6 +623,7 @@ export function createSessionPersonas({ sessionId, participantId, sessionNumber,
         persona.order,
         persona.name,
         JSON.stringify(persona.data || {}),
+        nowGmtPlus3Iso(),
         function onInsert(err) {
           if (err) return reject(err);
           created.push({ id: this.lastID, ...persona });
@@ -890,7 +896,7 @@ export function listIncompleteSessionsForAdmin() {
       AND consent.session_number = s.session_number
     WHERE s.completed_at IS NULL
       AND s.status != 'completed'
-      AND consent.consent_completed_at < datetime('now', '-1 hour')
+      AND CAST(strftime('%s', consent.consent_completed_at) AS INTEGER) < CAST(strftime('%s', 'now', '-1 hour') AS INTEGER)
     ORDER BY consent.consent_completed_at DESC
   `;
 
@@ -1025,7 +1031,7 @@ export function saveModuleQuestionResponse({
             normalizedAnswer,
             normalizedCorrect,
             normalizedCorrectness,
-            timedate || new Date().toISOString(),
+            timedate || nowGmtPlus3Iso(),
             timeSinceStart == null ? null : Number(timeSinceStart)
           ],
           function onInsert(err) {

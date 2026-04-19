@@ -27,6 +27,27 @@ let participants = [];
 let chartInstances = [];
 let currentParticipantDetails = null;
 const _saveTimers = new Map();
+const EXPERIMENT_TZ_OFFSET_MINUTES = 3 * 60;
+
+function pad2(value) {
+  return String(value).padStart(2, "0");
+}
+
+function pad3(value) {
+  return String(value).padStart(3, "0");
+}
+
+function isoInExperimentTimezone(date) {
+  const shifted = new Date(date.getTime() + EXPERIMENT_TZ_OFFSET_MINUTES * 60 * 1000);
+  const year = shifted.getUTCFullYear();
+  const month = pad2(shifted.getUTCMonth() + 1);
+  const day = pad2(shifted.getUTCDate());
+  const hours = pad2(shifted.getUTCHours());
+  const minutes = pad2(shifted.getUTCMinutes());
+  const seconds = pad2(shifted.getUTCSeconds());
+  const millis = pad3(shifted.getUTCMilliseconds());
+  return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}.${millis}+03:00`;
+}
 
 async function saveParticipantMetadata(participantId, subjectId, notes, scheduleStart) {
   try {
@@ -87,22 +108,26 @@ function toDatetimeLocal(iso) {
   if (!iso) return "";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const shifted = new Date(d.getTime() + EXPERIMENT_TZ_OFFSET_MINUTES * 60 * 1000);
+  return `${shifted.getUTCFullYear()}-${pad2(shifted.getUTCMonth() + 1)}-${pad2(shifted.getUTCDate())}T${pad2(shifted.getUTCHours())}:${pad2(shifted.getUTCMinutes())}`;
 }
 
 function toIsoFromLocal(local) {
   if (!local) return null;
-  // local is like YYYY-MM-DDTHH:mm
-  const d = new Date(local);
-  if (Number.isNaN(d.getTime())) return null;
-  return d.toISOString();
+  const match = String(local).match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/);
+  if (!match) return null;
+  const [, y, m, d, hh, mm] = match;
+  const utcMs = Date.UTC(Number(y), Number(m) - 1, Number(d), Number(hh), Number(mm))
+    - EXPERIMENT_TZ_OFFSET_MINUTES * 60 * 1000;
+  if (!Number.isFinite(utcMs)) return null;
+  return isoInExperimentTimezone(new Date(utcMs));
 }
+
 function formatDateTime(value) {
   if (!value) return "";
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return String(value);
-  return parsed.toLocaleString("he-IL");
+  return parsed.toLocaleString("he-IL", { timeZone: "Etc/GMT-3" });
 }
 
 function computeSessionScheduledFor(scheduleStart, sessionNumber) {
@@ -110,7 +135,7 @@ function computeSessionScheduledFor(scheduleStart, sessionNumber) {
   const base = new Date(scheduleStart);
   if (Number.isNaN(base.getTime())) return null;
   const offsetDays = Math.max(0, Number(sessionNumber) - 1) * 7;
-  return new Date(base.getTime() + offsetDays * 24 * 60 * 60 * 1000).toISOString();
+  return isoInExperimentTimezone(new Date(base.getTime() + offsetDays * 24 * 60 * 60 * 1000));
 }
 
 function computeStatus(session) {

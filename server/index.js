@@ -40,6 +40,7 @@ import {
   updateSessionScheduleLockByToken
 } from "./db.js";
 import { ensureSessionPersonas, buildPersonaPrompt } from "./utils/personaLoader.js";
+import { nowGmtPlus3Iso } from "./utils/timezone.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1273,7 +1274,7 @@ app.post("/api/session/:token/message", async (req, res) => {
     }
 
     const now = new Date();
-    const isoNow = now.toISOString();
+    const isoNow = nowGmtPlus3Iso();
     const firstMessageAt = personaRecord.firstMessageAt || isoNow;
     if (!personaRecord.firstMessageAt) {
       await markSessionPersonaFirstMessage(sessionPersonaId, isoNow);
@@ -1344,7 +1345,7 @@ app.post("/api/session/:token/message", async (req, res) => {
     });
 
     // save assistant message with a timestamp captured after response generation
-    const assistantTimestamp = new Date().toISOString();
+    const assistantTimestamp = nowGmtPlus3Iso();
     await savePersonaMessage({
       participantId: session.participantId,
       sessionNumber: session.sessionNumber,
@@ -1430,6 +1431,7 @@ app.post("/api/session/:token/modules/:moduleKey/answer", async (req, res) => {
     await markSessionStarted(session.sessionId);
     const refreshedSession = await getSessionByToken(token);
     const answeredAt = new Date();
+    const answeredAtIso = nowGmtPlus3Iso();
     const startedAtMs = refreshedSession?.startedAt ? new Date(refreshedSession.startedAt).getTime() : null;
     const elapsedMinutes = startedAtMs ? (answeredAt.getTime() - startedAtMs) / 60000 : null;
 
@@ -1456,7 +1458,7 @@ app.post("/api/session/:token/modules/:moduleKey/answer", async (req, res) => {
       answer: normalizedAnswer,
       correctAnswer: normalizedCorrectAnswer,
       isCorrect,
-      timedate: answeredAt.toISOString(),
+      timedate: answeredAtIso,
       timeSinceStart: elapsedMinutes
     });
 
