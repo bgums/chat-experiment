@@ -171,6 +171,13 @@ function getSessionSteps(session) {
   });
 }
 
+function shouldIncludeFeedbackForSession(session) {
+  if (!session) return false;
+  const isExperimental = session.groupAssignment === "experimental";
+  const sessionNumber = Number(session.sessionNumber);
+  return isExperimental && sessionNumber >= 2 && sessionNumber <= 4;
+}
+
 function combineChatPrompt(personaObj, includeMid = false) {
   const personaPrompt = buildPersonaPrompt(personaObj);
   const parts = [personaPrompt, chatInstructions];
@@ -1032,7 +1039,7 @@ app.get("/api/session/:token", async (req, res) => {
     await markSessionStarted(session.sessionId);
     await maybeMarkSessionCompleted(session);
 
-    const includeFeedbackSteps = session.groupAssignment === "experimental";
+    const includeFeedbackSteps = shouldIncludeFeedbackForSession(session);
     const personaSteps = (persistedPersonas || []).flatMap((personaRow) => {
       const personaData = withPersonaDisplay(personaRow.personaJson);
       const personaMeta = {
@@ -1107,7 +1114,7 @@ app.post("/api/session/:token/forms/:formKey", async (req, res) => {
 
     const steps = getSessionSteps(session);
     const requestedSessionPersonaId = req.body?.sessionPersonaId ? Number(req.body.sessionPersonaId) : null;
-    const personaFormKeys = session.groupAssignment === "experimental"
+    const personaFormKeys = shouldIncludeFeedbackForSession(session)
       ? new Set(["post_chat", "post_feedback"])
       : new Set(["post_chat"]);
 
@@ -1153,7 +1160,7 @@ app.get("/api/session/:token/forms/:formKey", async (req, res) => {
     }
 
     const steps = getSessionSteps(session);
-    const personaFormKeys = session.groupAssignment === "experimental"
+    const personaFormKeys = shouldIncludeFeedbackForSession(session)
       ? new Set(["post_chat", "post_feedback"])
       : new Set(["post_chat"]);
 
@@ -1516,7 +1523,7 @@ app.post("/api/session/:token/persona/:sessionPersonaId/feedback", async (req, r
     if (!session) {
       return res.status(404).json({ error: "Session not found." });
     }
-    if (session.groupAssignment !== "experimental") {
+    if (!shouldIncludeFeedbackForSession(session)) {
       return res.status(400).json({ error: "Feedback is not part of this session flow." });
     }
 
