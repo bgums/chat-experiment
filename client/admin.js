@@ -25,12 +25,12 @@ let chartInstances = [];
 let currentParticipantDetails = null;
 const _saveTimers = new Map();
 
-async function saveParticipantMetadata(participantId, subjectId, notes) {
+async function saveParticipantMetadata(participantId, subjectId, notes, scheduleStart) {
   try {
     const response = await fetch(`/api/admin/participant/${encodeURIComponent(participantId)}/metadata`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ subjectId: subjectId || null, notes: notes || null })
+      body: JSON.stringify({ subjectId: subjectId || null, notes: notes || null, scheduleStart: scheduleStart == null ? null : scheduleStart })
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -43,6 +43,7 @@ async function saveParticipantMetadata(participantId, subjectId, notes) {
     if (p) {
       p.subjectId = subjectId || null;
       p.notes = notes || null;
+      p.scheduleStart = scheduleStart == null ? null : scheduleStart;
     }
     return true;
   } catch (err) {
@@ -57,8 +58,8 @@ function scheduleSaveForInput(participantId, getValuesFn) {
   if (_saveTimers.has(key)) clearTimeout(_saveTimers.get(key));
   const t = setTimeout(async () => {
     _saveTimers.delete(key);
-    const { subjectId, notes } = getValuesFn();
-    await saveParticipantMetadata(participantId, subjectId, notes);
+    const { subjectId, notes, scheduleStart } = getValuesFn();
+    await saveParticipantMetadata(participantId, subjectId, notes, scheduleStart);
   }, 700);
   _saveTimers.set(key, t);
 }
@@ -73,6 +74,21 @@ function escapeHtml(text) {
     .replace(/'/g, "&#039;");
 }
 
+function toDatetimeLocal(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function toIsoFromLocal(local) {
+  if (!local) return null;
+  // local is like YYYY-MM-DDTHH:mm
+  const d = new Date(local);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString();
+}
 function formatDateTime(value) {
   if (!value) return "";
   const parsed = new Date(value);
@@ -136,7 +152,7 @@ function renderSubjectsPanel() {
     return;
   }
 
-  const rows = [];
+    const rows = [];
   participants.forEach((participant) => {
     const sessions = (participant.sessions || []).slice().sort((a, b) => a.sessionNumber - b.sessionNumber);
     sessions.forEach((session, idx) => {
@@ -155,11 +171,30 @@ function renderSubjectsPanel() {
         personaDisplay = `${half.charAt(0).toUpperCase() + half.slice(1)}`;
       }
 
+      // compute scheduled time for this session (session 1 = participant.scheduleStart)
+      let scheduledForSession = "";
+      try {
+        if (participant.scheduleStart) {
+          const base = new Date(participant.scheduleStart);
+          if (!Number.isNaN(base.getTime())) {
+            const offsetDays = (Number(session.sessionNumber) - 1) * 7;
+            const scheduled = new Date(base.getTime() + offsetDays * 24 * 60 * 60 * 1000);
+            scheduledForSession = formatDateTime(scheduled.toISOString());
+          }
+        }
+      } catch (err) {
+        scheduledForSession = "";
+      }
+
       rows.push(`
         <tr>
-          ${idx === 0 ? `<td rowspan="${sessions.length}"><a href="#" class="id-link participant-link" data-code="${escapeHtml(participant.participantCode)}">${escapeHtml(participant.participantCode)}</a><input class="participant-meta-input subject-id-input" data-id="${escapeHtml(participant.id)}" placeholder="מזהה נבדק" value="${escapeHtml(participant.subjectId || '')}"><input class="participant-meta-input subject-notes-input" data-id="${escapeHtml(participant.id)}" placeholder="הערות" value="${escapeHtml(participant.notes || '')}"></td>` : ""}
+          ${idx === 0 ? (() => {
+            const dtValue = escapeHtml(toDatetimeLocal(participant.scheduleStart || ''));
+            return `<td rowspan="${sessions.length}"><a href="#" class="id-link participant-link" data-code="${escapeHtml(participant.participantCode)}">${escapeHtml(participant.participantCode)}</a><div style="display:flex;flex-direction:column;gap:6px;margin-top:6px"><div style=\"display:flex;gap:6px;align-items:center\"><input type=\"datetime-local\" class=\"participant-meta-input scheduled-time-input\" data-id=\"${escapeHtml(participant.id)}\" value=\"${dtValue}\" style=\"min-width:180px;max-width:220px;\"><button class=\"reset-schedule-btn\" data-id=\"${escapeHtml(participant.id)}\" title=\"Clear schedule\">×</button></div><input class=\"participant-meta-input subject-id-input\" data-id=\"${escapeHtml(participant.id)}\" placeholder=\"מזהה נבדק\" value=\"${escapeHtml(participant.subjectId || '')}\"><input class=\"participant-meta-input subject-notes-input\" data-id=\"${escapeHtml(participant.id)}\" placeholder=\"הערות\" value=\"${escapeHtml(participant.notes || '')}\"></div></td>`;
+          })() : ""}
           ${idx === 0 ? `<td rowspan="${sessions.length}">${escapeHtml(participant.groupAssignment || "")}</td>` : ""}
           <td>${escapeHtml(session.sessionNumber)}</td>
+          <td>${escapeHtml(scheduledForSession)}</td>
           <td>${escapeHtml(formatDateTime(session.consentCompletedAt))}</td>
           <td>${renderStatus(status)}</td>
           <td>${escapeHtml(personaDisplay || "-")}</td>
@@ -177,7 +212,8 @@ function renderSubjectsPanel() {
           <th>Participant ID</th>
           <th>Group</th>
           <th>Session</th>
-          <th>Session Start Time</th>
+            <th>Scheduled Time</th>
+            <th>Session Start Time</th>
           <th>Status</th>
           <th>Personas</th>
           <th>אימייל</th>
@@ -493,6 +529,21 @@ function renderSessionDetails(details, selectedSession = "all") {
 
   const content = filtered.map((bucket) => {
     const status = computeStatus(bucket.session || {});
+    // compute scheduled time for this session based on participant.scheduleStart
+    let scheduledForSession = "";
+    try {
+      const participantSchedule = details?.participant?.scheduleStart || null;
+      if (participantSchedule) {
+        const base = new Date(participantSchedule);
+        if (!Number.isNaN(base.getTime())) {
+          const offsetDays = (Number(bucket.sessionNumber) - 1) * 7;
+          const scheduled = new Date(base.getTime() + offsetDays * 24 * 60 * 60 * 1000);
+          scheduledForSession = formatDateTime(scheduled.toISOString());
+        }
+      }
+    } catch (err) {
+      scheduledForSession = "";
+    }
 
     const formsHtml = bucket.forms.length
       ? bucket.forms.map((form) => {
@@ -527,6 +578,7 @@ function renderSessionDetails(details, selectedSession = "all") {
         <div class="session-block-header">
           Session ${escapeHtml(bucket.sessionNumber)} · ${renderStatus(status)}
           <span class="small-muted"> · Personas: ${escapeHtml(normalizePersonaNames(bucket.session?.personaNames) || "-")}</span>
+          ${scheduledForSession ? `<span class="small-muted"> · Scheduled: ${escapeHtml(scheduledForSession)}</span>` : ""}
         </div>
 
         <details class="session-collapsible">
@@ -687,6 +739,26 @@ subjectsPanel?.addEventListener("click", async (event) => {
     return;
   }
 
+  const resetBtn = event.target.closest && event.target.closest('.reset-schedule-btn');
+  if (resetBtn) {
+    event.preventDefault();
+    const participantId = resetBtn.dataset.id;
+    if (!participantId) return;
+    if (!window.confirm('Reset scheduled time for this participant?')) return;
+    const p = participants.find((x) => String(x.id) === String(participantId));
+    const subjectId = p?.subjectId || null;
+    const notes = p?.notes || null;
+    try {
+      // set scheduleStart to null via metadata endpoint
+      await saveParticipantMetadata(participantId, subjectId, notes, null);
+      setManagementMessage('Scheduled time reset.');
+      await refreshAllPanels();
+    } catch (err) {
+      setManagementMessage('שגיאה באיפוס הלו"ז.', true);
+    }
+    return;
+  }
+
   const target = event.target;
   if (target && target.classList.contains("participant-link")) {
     event.preventDefault();
@@ -697,7 +769,7 @@ subjectsPanel?.addEventListener("click", async (event) => {
 subjectsPanel?.addEventListener("input", (event) => {
   const target = event.target;
   if (!target) return;
-  const isSubject = target.classList && (target.classList.contains("subject-id-input") || target.classList.contains("subject-notes-input"));
+  const isSubject = target.classList && (target.classList.contains("subject-id-input") || target.classList.contains("subject-notes-input") || target.classList.contains("scheduled-time-input"));
   if (!isSubject) return;
 
   const td = target.closest && target.closest('td');
@@ -708,8 +780,29 @@ subjectsPanel?.addEventListener("input", (event) => {
     const cell = td || document.querySelector(`.subject-id-input[data-id="${participantId}"]`)?.closest('td');
     const subj = cell ? (cell.querySelector('.subject-id-input')?.value || '') : (document.querySelector(`.subject-id-input[data-id="${participantId}"]`)?.value || '');
     const notes = cell ? (cell.querySelector('.subject-notes-input')?.value || '') : (document.querySelector(`.subject-notes-input[data-id="${participantId}"]`)?.value || '');
-    return { subjectId: subj, notes };
+    const scheduleValLocal = cell ? (cell.querySelector('.scheduled-time-input')?.value || '') : (document.querySelector(`.scheduled-time-input[data-id="${participantId}"]`)?.value || '');
+    const scheduleIso = scheduleValLocal ? toIsoFromLocal(scheduleValLocal) : null;
+    return { subjectId: subj, notes, scheduleStart: scheduleIso };
   });
+});
+
+subjectsPanel?.addEventListener("change", async (event) => {
+  const target = event.target;
+  if (!target || !target.classList || !target.classList.contains("scheduled-time-input")) return;
+
+  const td = target.closest && target.closest("td");
+  const participantId = target.dataset.id || (td && td.querySelector && td.querySelector(".subject-id-input")?.dataset?.id) || null;
+  if (!participantId) return;
+
+  const cell = td || document.querySelector(`.subject-id-input[data-id="${participantId}"]`)?.closest("td");
+  const subjectId = cell ? (cell.querySelector(".subject-id-input")?.value || "") : (document.querySelector(`.subject-id-input[data-id="${participantId}"]`)?.value || "");
+  const notes = cell ? (cell.querySelector(".subject-notes-input")?.value || "") : (document.querySelector(`.subject-notes-input[data-id="${participantId}"]`)?.value || "");
+  const scheduleValLocal = target.value || "";
+  const scheduleIso = scheduleValLocal ? toIsoFromLocal(scheduleValLocal) : null;
+
+  await saveParticipantMetadata(participantId, subjectId, notes, scheduleIso);
+  setManagementMessage("Scheduled start saved.");
+  await refreshAllPanels();
 });
 
 messageSessionFilter?.addEventListener("change", () => {

@@ -258,6 +258,35 @@ details.panel-card > summary h2 {
   color: rgba(91, 109, 122, 0.8);
 }
 
+.scheduled-time-input {
+  font-family: Inter, Assistant, sans-serif;
+  font-size: 0.88rem;
+  color: var(--admin-muted);
+  background: transparent;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(16,34,58,0.06);
+  box-shadow: none;
+}
+
+.reset-schedule-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid rgba(16,34,58,0.06);
+  background: rgba(255,255,255,0.9);
+  color: var(--admin-muted);
+  font-weight: 700;
+  cursor: pointer;
+}
+.reset-schedule-btn:hover {
+  background: rgba(250,250,252,0.98);
+  color: var(--admin-text);
+}
+
 .two-col {
   display: grid;
   grid-template-columns: 1fr;

@@ -934,9 +934,11 @@ app.post("/api/admin/participant/:participantId/metadata", async (req, res) => {
 
     const subjectId = req.body?.subjectId == null ? null : String(req.body.subjectId);
     const notes = req.body?.notes == null ? null : String(req.body.notes);
+    const rawSchedule = req.body?.scheduleStart;
+    const scheduleStart = rawSchedule == null || rawSchedule === "" ? null : String(rawSchedule);
 
-    await updateParticipantMetadata(participantId, { subjectId, notes });
-    return res.json({ ok: true, participantId, subjectId, notes });
+    await updateParticipantMetadata(participantId, { subjectId, notes, scheduleStart });
+    return res.json({ ok: true, participantId, subjectId, notes, scheduleStart });
   } catch (error) {
     console.error("Failed to update participant metadata", error);
     return res.status(500).json({ error: error?.message || "Could not update participant metadata." });

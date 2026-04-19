@@ -42,6 +42,7 @@ function createDatabase() {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         participant_code TEXT UNIQUE NOT NULL,
         subject_id TEXT,
+        schedule_start TEXT,
         notes TEXT,
         total_sessions INTEGER DEFAULT 4,
         group_assignment TEXT DEFAULT 'experimental',
@@ -146,6 +147,9 @@ function createDatabase() {
     ensureColumnExists(db, "participants", "subject_id", "TEXT").catch((err) =>
       console.error("Failed to add subject_id column", err)
     );
+    ensureColumnExists(db, "participants", "schedule_start", "TEXT").catch((err) =>
+      console.error("Failed to add schedule_start column", err)
+    );
     ensureColumnExists(db, "participants", "notes", "TEXT").catch((err) =>
       console.error("Failed to add notes column", err)
     );
@@ -215,6 +219,7 @@ export function listParticipants() {
   const db = getDb();
   const query = `
     SELECT p.id AS participant_id,
+      p.schedule_start,
       p.subject_id,
       p.notes,
       p.participant_code,
@@ -261,7 +266,8 @@ export function listParticipants() {
             id: row.participant_id,
             participantCode: row.participant_code,
             status: row.status,
-            subjectId: row.subject_id || null,
+              subjectId: row.subject_id || null,
+              scheduleStart: row.schedule_start || null,
             notes: row.notes || null,
             groupAssignment: row.group_assignment,
             readingOrder: row.reading_order,
@@ -296,12 +302,12 @@ export function listParticipants() {
   });
 }
 
-export function updateParticipantMetadata(participantId, { subjectId = null, notes = null } = {}) {
+export function updateParticipantMetadata(participantId, { subjectId = null, notes = null, scheduleStart = null } = {}) {
   const db = getDb();
   return new Promise((resolve, reject) => {
     db.run(
-      "UPDATE participants SET subject_id = ?, notes = ? WHERE id = ?",
-      [subjectId, notes, participantId],
+      "UPDATE participants SET subject_id = ?, notes = ?, schedule_start = ? WHERE id = ?",
+      [subjectId, notes, scheduleStart, participantId],
       function onUpdate(err) {
         if (err) return reject(err);
         resolve(true);
@@ -351,7 +357,7 @@ export function getParticipantByCode(participantCode) {
   const db = getDb();
   return new Promise((resolve, reject) => {
     db.get(
-      "SELECT id, participant_code AS participantCode, total_sessions AS totalSessions, status, group_assignment AS groupAssignment, reading_order AS readingOrder, created_at AS createdAt FROM participants WHERE participant_code = ?",
+      "SELECT id, participant_code AS participantCode, total_sessions AS totalSessions, status, group_assignment AS groupAssignment, reading_order AS readingOrder, schedule_start AS scheduleStart, created_at AS createdAt FROM participants WHERE participant_code = ?",
       [participantCode],
       (err, row) => {
         if (err) return reject(err);
