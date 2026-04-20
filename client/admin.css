@@ -217,8 +217,12 @@ details.panel-card > summary h2 {
   cursor: pointer;
 }
 
-/* Copy email small button used in participants table */
-.copy-email-btn {
+/* Session action buttons used in participants table */
+.copy-email-btn,
+.session-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-size: 0.88rem;
   padding: 6px 8px;
   border-radius: 8px;
@@ -226,15 +230,36 @@ details.panel-card > summary h2 {
   background: var(--admin-primary-soft);
   color: var(--admin-primary-dark);
   cursor: pointer;
+  text-decoration: none;
+  line-height: 1;
   transition: background-color 0.12s ease, transform 0.06s ease, color 0.12s ease;
 }
-.copy-email-btn:hover {
+.copy-email-btn:hover,
+.session-action-btn:hover {
   background: var(--admin-primary);
   color: #fff;
   transform: translateY(-1px);
 }
-.copy-email-btn:active {
+.copy-email-btn:active,
+.session-action-btn:active {
   transform: translateY(0);
+}
+
+.session-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.session-number {
+  font-weight: 700;
+}
+
+.session-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .small-muted {

@@ -225,14 +225,20 @@ function renderSubjectsPanel() {
             return `<td rowspan="${sessions.length}"><a href="#" class="id-link participant-link" data-code="${escapeHtml(participant.participantCode)}">${escapeHtml(participant.participantCode)}</a><div style="display:flex;flex-direction:column;gap:6px;margin-top:6px"><div style=\"display:flex;gap:6px;align-items:center\"><input type=\"datetime-local\" class=\"participant-meta-input scheduled-time-input\" data-id=\"${escapeHtml(participant.id)}\" value=\"${dtValue}\" style=\"min-width:180px;max-width:220px;\"><button class=\"reset-schedule-btn\" data-id=\"${escapeHtml(participant.id)}\" title=\"Clear schedule\">×</button></div><input class=\"participant-meta-input subject-id-input\" data-id=\"${escapeHtml(participant.id)}\" placeholder=\"מזהה נבדק\" value=\"${escapeHtml(participant.subjectId || '')}\"><input class=\"participant-meta-input subject-notes-input\" data-id=\"${escapeHtml(participant.id)}\" placeholder=\"הערות\" value=\"${escapeHtml(participant.notes || '')}\"></div></td>`;
           })() : ""}
           ${idx === 0 ? `<td rowspan="${sessions.length}">${escapeHtml(participant.groupAssignment || "")}</td>` : ""}
-          <td>${escapeHtml(session.sessionNumber)}</td>
+          <td>
+            <div class="session-cell">
+              <span class="session-number">${escapeHtml(session.sessionNumber)}</span>
+              <div class="session-actions">
+                ${session.token ? `<a class="session-action-btn" href="/?token=${encodeURIComponent(session.token)}" target="_blank" rel="noopener">פתח</a>` : ""}
+                <button class="copy-email-btn session-action-btn" aria-label="העתק אימייל" data-token="${escapeHtml(session.token || "")}" data-session="${escapeHtml(session.sessionNumber)}" data-code="${escapeHtml(participant.participantCode)}">אימייל</button>
+                <button class="copy-token-btn session-action-btn" aria-label="העתק טוקן" data-token="${escapeHtml(session.token || "")}">טוקן</button>
+              </div>
+            </div>
+          </td>
           <td>${escapeHtml(scheduledForSession)}</td>
-          <td>${session.scheduleLockDisabled ? "כבויה" : "פעילה"}</td>
           <td>${escapeHtml(formatDateTime(session.consentCompletedAt))}</td>
           <td>${renderStatus(status)}</td>
           <td>${escapeHtml(personaDisplay || "-")}</td>
-          <td><button class="copy-email-btn" aria-label="העתק אימייל" data-token="${escapeHtml(session.token || "")}" data-session="${escapeHtml(session.sessionNumber)}" data-code="${escapeHtml(participant.participantCode)}">העתק</button></td>
-          <td>${session.token ? `<a href="/?token=${encodeURIComponent(session.token)}" target="_blank" rel="noopener">פתח</a>` : ""}</td>
         </tr>
       `);
     });
@@ -246,12 +252,9 @@ function renderSubjectsPanel() {
           <th>Group</th>
           <th>Session</th>
             <th>Scheduled Time</th>
-            <th>24h Lock</th>
             <th>Session Start Time</th>
           <th>Status</th>
           <th>Personas</th>
-          <th>אימייל</th>
-          <th>Link</th>
         </tr>
       </thead>
       <tbody>${rows.join("")}</tbody>
@@ -868,6 +871,23 @@ subjectsPanel?.addEventListener("click", async (event) => {
       setManagementMessage("אימייל הועתק ללוח.");
     } catch (err) {
       setManagementMessage("שגיאה בהעתקת האימייל.", true);
+    }
+    return;
+  }
+
+  const copyTokenBtn = event.target.closest && event.target.closest('.copy-token-btn');
+  if (copyTokenBtn) {
+    event.preventDefault();
+    const token = String(copyTokenBtn.dataset.token || "");
+    if (!token) {
+      setManagementMessage("אין טוקן זמין להעתקה.", true);
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(token);
+      setManagementMessage("הטוקן הועתק ללוח.");
+    } catch (_err) {
+      setManagementMessage("שגיאה בהעתקת הטוקן.", true);
     }
     return;
   }
