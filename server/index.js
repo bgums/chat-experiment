@@ -743,6 +743,22 @@ function buildPersonaRowsForGroup(groupedPersonas, groupKey) {
   }));
 }
 
+function buildDerangedPermutation(values) {
+  const base = [...values];
+  if (base.length < 2) {
+    throw new Error("At least two persona groups are required to avoid control-group repeats per participant.");
+  }
+
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const candidate = shuffleArray(base);
+    const isDerangement = candidate.every((value, idx) => value !== base[idx]);
+    if (isDerangement) return candidate;
+  }
+
+  // Deterministic fallback that guarantees no fixed points for n >= 2.
+  return base.map((_, idx) => base[(idx + 1) % base.length]);
+}
+
 function buildBalancedBatchPlan(groupKeys) {
   const normalizedGroups = (groupKeys || []).map((g) => String(g)).filter(Boolean);
   if (!normalizedGroups.length) {
@@ -750,9 +766,13 @@ function buildBalancedBatchPlan(groupKeys) {
   }
 
   const armSize = normalizedGroups.length;
+  if (armSize < 4) {
+    throw new Error("Balanced no-repeat allocation requires at least 4 persona groups (one unique group per experimental session).");
+  }
+
   const experimentalBase = shuffleArray(normalizedGroups);
   const controlSession1Base = shuffleArray(normalizedGroups);
-  const controlSession4Base = shuffleArray(normalizedGroups);
+  const controlSession4Base = buildDerangedPermutation(controlSession1Base);
   const readingBase = shuffleArray(Array.from({ length: armSize }, (_, idx) => idx));
 
   const experimentalParticipants = Array.from({ length: armSize }, (_, idx) => {
