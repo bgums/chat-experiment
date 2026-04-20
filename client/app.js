@@ -404,7 +404,7 @@ async function renderSessionCompletionScreen() {
 
   const completeBtn = document.createElement("button");
   completeBtn.type = "button";
-  completeBtn.className = "ghost-button";
+  completeBtn.className = "completion-submit-button";
   completeBtn.textContent = buttonText;
 
   if (!state.token || state.completionRequested) {

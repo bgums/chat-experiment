@@ -815,6 +815,28 @@ body {
   align-self: flex-start;
 }
 
+.completion-submit-button {
+  border: none;
+  background: var(--primary);
+  color: #ffffff;
+  padding: 10px 16px;
+  border-radius: 999px;
+  cursor: pointer;
+  align-self: flex-start;
+  font-family: inherit;
+  font-size: 1rem;
+  font-weight: 400;
+}
+
+.completion-submit-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.completion-submit-button:not(:disabled):hover {
+  background: var(--primary-dark);
+}
+
 .inline-form {
   display: flex;
   flex-direction: column;
