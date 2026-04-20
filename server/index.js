@@ -69,7 +69,7 @@ const feedbackInstructions = fs.readFileSync(feedbackInstructionsPath, "utf-8");
 
 const CHAT_DURATION_MINUTES = 8;
 const CHAT_DURATION_MS = CHAT_DURATION_MINUTES * 60 * 1000;
-const CONSENT_LOCK_WINDOW_MS = 60 * 60 * 1000;
+const CONSENT_LOCK_WINDOW_MS = 2 * 60 * 60 * 1000;
 const SESSION_SCHEDULE_LOCK_WINDOW_MS = 24 * 60 * 60 * 1000;
 const MID_PROMPT_MINUTES = 9;
 const MID_PROMPT_MS = MID_PROMPT_MINUTES * 60 * 1000;
@@ -112,9 +112,11 @@ function isAdminAuthorized(req) {
   return user === ADMIN_USER && pass === ADMIN_PASSWORD;
 }
 
-function challengeAdminAuth(res) {
-  res.set("WWW-Authenticate", "Basic realm=admin");
-  return res.status(401).json({ error: "Admin credentials are required for this session." });
+function getLockFormKey(lockCode) {
+  if (lockCode === "session_completed") return "session_locked_completion";
+  if (lockCode === "consent_expired") return "session_locked_consent_expired";
+  if (lockCode === "scheduled_time_expired") return "session_locked_scheduled_expired";
+  return "session_locked_completion";
 }
 
 const sessionFlowPath = path.join(__dirname, "config", "sessionFlow.json");
@@ -532,68 +534,17 @@ function buildFormResponsesCsv(rows) {
 
 async function maybeMarkSessionCompleted(session) {
   if (!session?.sessionId) return false;
-  const steps = getSessionSteps(session);
-  const hasChat = steps.some((step) => step.type === "chat");
-  const moduleSteps = steps.filter((step) => step.type === "module" && step.key);
+  if (session.sessionStatus === "completed" || session.completedAt) return true;
+
   const formResponses = await listFormResponses({
     participantId: session.participantId,
     sessionNumber: session.sessionNumber
   });
-  const reachedCompletionScreen = formResponses.some((row) =>
-    row.formKey === "session_completion" && (row.sessionPersonaId == null || row.sessionPersonaId === "")
+  const completionConfirmed = formResponses.some((row) =>
+    row.formKey === "session_completion_confirmed" && (row.sessionPersonaId == null || row.sessionPersonaId === "")
   );
 
-  if (!reachedCompletionScreen) return false;
-
-  if (hasChat) {
-    const personas = await getSessionPersonas(session.sessionId);
-    if (!personas || !personas.length) return false;
-
-    const now = Date.now();
-    const allChatsCompleted = personas.every((persona) => {
-      if (!persona.firstMessageAt) return false;
-      const elapsed = now - new Date(persona.firstMessageAt).getTime();
-      return elapsed >= CHAT_DURATION_MS;
-    });
-
-    if (!allChatsCompleted) return false;
-  } else if (moduleSteps.length) {
-    for (const moduleStep of moduleSteps) {
-      const moduleDef = loadModuleDefinition(moduleStep.key);
-      if (!moduleDef) return false;
-
-      const sections = Array.isArray(moduleDef.sections) ? moduleDef.sections : [];
-      const questions = sections.flatMap((section) =>
-        (section.questions || []).map((question, idx) => ({
-          sectionId: section.section_id,
-          questionId: getModuleQuestionId(section, question, idx)
-        }))
-      );
-      if (!questions.length) {
-        continue;
-      }
-
-      const responses = await listModuleQuestionResponses({
-        participantId: session.participantId,
-        sessionNumber: session.sessionNumber,
-        moduleName: moduleStep.key
-      });
-
-      const answeredSet = new Set(
-        responses.map((r) => `${String(r.sectionId || "")}::${String(r.questionId || "")}`)
-      );
-
-      for (const question of questions) {
-        const sectionId = String(question.sectionId || "");
-        const questionId = String(question.questionId || "");
-        if (!sectionId || !questionId) continue;
-        const key = `${sectionId}::${questionId}`;
-        if (!answeredSet.has(key)) {
-          return false;
-        }
-      }
-    }
-  }
+  if (!completionConfirmed) return false;
 
   await markSessionCompleted(session.sessionId);
   const sessions = await listSessionsByParticipant(session.participantId);
@@ -638,7 +589,7 @@ async function getSessionLockState(session) {
   if (elapsed > CONSENT_LOCK_WINDOW_MS) {
     return {
       locked: true,
-      reason: "More than 1 hour passed since consent was completed.",
+      reason: "More than 2 hours passed since consent was completed.",
       code: "consent_expired"
     };
   }
@@ -657,19 +608,25 @@ async function enforceLockedSessionAdmin(req, res, next) {
     await maybeMarkSessionCompleted(session);
     const refreshed = await getSessionByToken(sessionToken);
     const lockState = await getSessionLockState(refreshed || session);
+    req.sessionLockState = lockState;
     if (!lockState.locked) return next();
-    if (isAdminAuthorized(req)) return next();
 
-    return challengeAdminAuth(res);
+    const unlockRequested = String(req.headers["x-session-unlock"] || "") === "1";
+    if (isAdminAuthorized(req) && unlockRequested) return next();
+
+    const isSessionOverviewRoute = req.method === "GET" && (req.path === "/" || req.path === "");
+    if (isSessionOverviewRoute) return next();
+
+    return res.status(423).json({
+      error: "Session is locked.",
+      lockState
+    });
   } catch (error) {
     console.error("Failed to enforce locked-session auth", error);
     return res.status(500).json({ error: "Could not validate session lock state." });
   }
 }
 
-app.get("/", enforceLockedSessionAdmin, (_req, res, next) => {
-  next();
-});
 app.use("/api/session/:token", enforceLockedSessionAdmin);
 app.use("/forms-assets", express.static(formsDir));
 app.use(express.static(path.join(__dirname, "..", "client")));
@@ -1257,6 +1214,19 @@ app.get("/api/session/:token", async (req, res) => {
       return res.status(404).json({ error: "Session not found." });
     }
 
+    const lockState = req.sessionLockState || await getSessionLockState(session);
+    const unlockRequested = String(req.headers["x-session-unlock"] || "") === "1";
+    if (lockState.locked && !(isAdminAuthorized(req) && unlockRequested)) {
+      return res.json({
+        locked: true,
+        lockState,
+        lockFormKey: getLockFormKey(lockState.code),
+        participantCode: session.participantCode,
+        sessionNumber: session.sessionNumber,
+        totalSessions: session.totalSessions
+      });
+    }
+
     const definition = getSessionDefinition(session.groupAssignment, session.sessionNumber);
     const configuredSteps = getSessionSteps(session);
     const hasChatSteps = configuredSteps.some((step) => step.type === "chat");
@@ -1703,9 +1673,20 @@ app.post("/api/session/:token/complete", async (req, res) => {
     if (!session) {
       return res.status(404).json({ error: "Session not found." });
     }
+
+    await saveFormResponse({
+      participantId: session.participantId,
+      sessionNumber: session.sessionNumber,
+      formKey: "session_completion_confirmed",
+      responses: {
+        confirmedAt: nowGmtPlus3Iso()
+      },
+      sessionPersonaId: null
+    });
+
     const completed = await maybeMarkSessionCompleted(session);
     if (!completed) {
-      return res.status(400).json({ error: "Session cannot be completed until all required steps are finished." });
+      return res.status(400).json({ error: "Session completion was not confirmed." });
     }
     res.json({ ok: true });
   } catch (error) {

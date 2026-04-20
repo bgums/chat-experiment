@@ -35,7 +35,9 @@ const state = {
   conversationId: null,
   personas: {},
   completionRequested: false,
-  completionScreenRecorded: false
+  completionScreenRecorded: false,
+  sessionAdminAuthHeader: null,
+  sessionUnlockAuthorized: false
 };
 
 const CHAT_DURATION_MINUTES = 8;
@@ -110,7 +112,7 @@ async function fetchSavedFormResponses(formKey, step = {}) {
     ? `/api/session/${state.token}/forms/${formKey}?${query}`
     : `/api/session/${state.token}/forms/${formKey}`;
   try {
-    const resp = await fetch(url);
+    const resp = await sessionApiFetch(url);
     if (!resp.ok) {
       return { responses: {} };
     }
@@ -125,10 +127,24 @@ async function markSessionComplete() {
   if (!state.token || state.completionRequested) return;
   state.completionRequested = true;
   try {
-    await fetch(`/api/session/${state.token}/complete`, { method: "POST" });
+    await sessionApiFetch(`/api/session/${state.token}/complete`, { method: "POST" });
   } catch (error) {
     console.warn("Failed to mark session complete", error);
   }
+}
+
+function sessionApiFetch(url, options = {}) {
+  const headers = new Headers(options.headers || {});
+  if (state.sessionAdminAuthHeader && !headers.has("Authorization")) {
+    headers.set("Authorization", state.sessionAdminAuthHeader);
+  }
+  if (state.sessionUnlockAuthorized && !headers.has("x-session-unlock")) {
+    headers.set("x-session-unlock", "1");
+  }
+  return fetch(url, {
+    ...options,
+    headers
+  });
 }
 
 const stopChatTimer = () => {
@@ -218,7 +234,7 @@ const scheduleMidPrime = (startIso, sessionPersonaId) => {
   const delay = Math.max(0, midMs - (now - startMs));
   midPrimeTimeout = setTimeout(async () => {
     try {
-      await fetch(`/api/session/${state.token}/persona/${sessionPersonaId}/mid-prime`, { method: "POST" });
+      await sessionApiFetch(`/api/session/${state.token}/persona/${sessionPersonaId}/mid-prime`, { method: "POST" });
     } catch (error) {
       console.warn("mid-prime failed", error);
     }
@@ -254,6 +270,80 @@ async function loadInstructionContent(formKey) {
   } catch (error) {
     return null;
   }
+}
+
+function resolveLockFormKey(lockState, lockFormKey) {
+  if (lockFormKey) return lockFormKey;
+  const code = String(lockState?.code || "");
+  if (code === "session_completed") return "session_locked_completion";
+  if (code === "consent_expired") return "session_locked_consent_expired";
+  if (code === "scheduled_time_expired") return "session_locked_scheduled_expired";
+  return "session_locked_completion";
+}
+
+async function renderLockedSessionScreen(lockState, lockFormKey) {
+  const content = await loadInstructionContent(resolveLockFormKey(lockState, lockFormKey));
+  const titleText = content?.title || "המפגש נעול";
+  const paragraphs = Array.isArray(content?.paragraphs) ? content.paragraphs : [];
+  const buttonText = content?.buttonText || "כניסת מנהל";
+
+  const wrapper = document.createElement("div");
+  wrapper.classList.add("step-card");
+
+  const title = document.createElement("h3");
+  title.textContent = titleText;
+  wrapper.appendChild(title);
+
+  paragraphs.forEach((text) => {
+    const paragraph = document.createElement("p");
+    paragraph.textContent = text;
+    wrapper.appendChild(paragraph);
+  });
+
+  const status = document.createElement("p");
+  status.className = "muted";
+  status.style.display = "none";
+  wrapper.appendChild(status);
+
+  const adminBtn = document.createElement("button");
+  adminBtn.type = "button";
+  adminBtn.className = "ghost-button";
+  adminBtn.textContent = buttonText;
+
+  adminBtn.addEventListener("click", async () => {
+    const username = window.prompt("שם משתמש מנהל:", "");
+    if (!username) return;
+    const password = window.prompt("סיסמת מנהל:", "");
+    if (!password) return;
+
+    const basic = btoa(`${username}:${password}`);
+    adminBtn.disabled = true;
+    adminBtn.textContent = "בודק...";
+    status.style.display = "none";
+
+    try {
+      const ok = await verifyAdminCredentials(username, password);
+      if (!ok) {
+        status.textContent = "פרטי מנהל שגויים. נסו שוב.";
+        status.style.display = "block";
+        return;
+      }
+
+      state.sessionAdminAuthHeader = `Basic ${basic}`;
+      state.sessionUnlockAuthorized = true;
+      await loadSession();
+    } catch (error) {
+      status.textContent = "בדיקת ההרשאה נכשלה. נסו שוב.";
+      status.style.display = "block";
+    } finally {
+      adminBtn.disabled = false;
+      adminBtn.textContent = buttonText;
+    }
+  });
+
+  wrapper.appendChild(adminBtn);
+  stepContainer.innerHTML = "";
+  stepContainer.appendChild(wrapper);
 }
 
 async function renderParticipantInstruction(step) {
@@ -292,6 +382,7 @@ async function renderSessionCompletionScreen() {
 
   const titleText = selectedContent?.title || "תודה על השתתפותכם";
   const paragraphs = Array.isArray(selectedContent?.paragraphs) ? selectedContent.paragraphs : [];
+  const buttonText = selectedContent?.buttonText || content?.buttonText || "אנא לחצו כאן לסיום המפגש ושליחתו";
 
   const wrapper = document.createElement("div");
   wrapper.classList.add("step-card");
@@ -306,24 +397,50 @@ async function renderSessionCompletionScreen() {
     wrapper.appendChild(paragraph);
   });
 
+  const status = document.createElement("p");
+  status.className = "muted";
+  status.style.display = "none";
+  wrapper.appendChild(status);
+
+  const completeBtn = document.createElement("button");
+  completeBtn.type = "button";
+  completeBtn.className = "ghost-button";
+  completeBtn.textContent = buttonText;
+
+  if (!state.token || state.completionRequested) {
+    completeBtn.disabled = true;
+  }
+
+  completeBtn.addEventListener("click", async () => {
+    if (!state.token || state.completionRequested) return;
+
+    completeBtn.disabled = true;
+    completeBtn.textContent = "שולח...";
+
+    try {
+      if (!state.completionScreenRecorded) {
+        const viewedResponse = await sessionApiFetch(`/api/session/${state.token}/completion-viewed`, { method: "POST" });
+        if (viewedResponse.ok) {
+          state.completionScreenRecorded = true;
+        }
+      }
+
+      await markSessionComplete();
+      status.textContent = "המפגש נשלח בהצלחה.";
+      status.style.display = "block";
+      completeBtn.textContent = buttonText;
+    } catch (error) {
+      status.textContent = "שליחת המפגש נכשלה. נסו שוב.";
+      status.style.display = "block";
+      completeBtn.disabled = false;
+      completeBtn.textContent = buttonText;
+    }
+  });
+
+  wrapper.appendChild(completeBtn);
+
   stepContainer.innerHTML = "";
   stepContainer.appendChild(wrapper);
-
-  if (!state.token || state.completionScreenRecorded) {
-    await markSessionComplete();
-    return;
-  }
-
-  try {
-    const response = await fetch(`/api/session/${state.token}/completion-viewed`, { method: "POST" });
-    if (response.ok) {
-      state.completionScreenRecorded = true;
-    }
-  } catch (error) {
-    console.warn("Failed to record completion screen view", error);
-  }
-
-  await markSessionComplete();
 }
 
 function renderForm(formDef, step = {}, savedResponses = {}) {
@@ -739,7 +856,7 @@ function renderForm(formDef, step = {}, savedResponses = {}) {
       }
     }
 
-    saveInFlight = fetch(`/api/session/${state.token}/forms/${formDef.key}`, {
+    saveInFlight = sessionApiFetch(`/api/session/${state.token}/forms/${formDef.key}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -963,7 +1080,7 @@ async function renderFeedback(step, renderId) {
     }
 
     try {
-      const response = await fetch(`/api/session/${state.token}/persona/${step.sessionPersonaId}/feedback`, { method: "POST" });
+      const response = await sessionApiFetch(`/api/session/${state.token}/persona/${step.sessionPersonaId}/feedback`, { method: "POST" });
       const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
@@ -1151,7 +1268,7 @@ async function renderCombinedSectionModule(step, sections, moduleStepCount) {
   // Aggregate responses for all involved modules
   const moduleKeys = Array.from(new Set(sections.map((s) => s.__moduleKey)));
   const responsesList = await Promise.all(
-    moduleKeys.map((k) => fetch(`/api/session/${state.token}/modules/${k}/responses`).then((r) => (r.ok ? r.json() : { responses: [] })))
+    moduleKeys.map((k) => sessionApiFetch(`/api/session/${state.token}/modules/${k}/responses`).then((r) => (r.ok ? r.json() : { responses: [] })))
   );
   const responses = responsesList.flatMap((p) => p.responses || []);
   const responseMap = new Map(responses.map((row) => [`${String(row.sectionId)}::${String(row.questionId)}`, row]));
@@ -1255,7 +1372,7 @@ async function renderCombinedSectionModule(step, sections, moduleStepCount) {
                 answer: option,
                 correctAnswer
               };
-              const saveResp = await fetch(`/api/session/${state.token}/modules/${section.__moduleKey}/answer`, {
+              const saveResp = await sessionApiFetch(`/api/session/${state.token}/modules/${section.__moduleKey}/answer`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(payload)
@@ -1340,7 +1457,7 @@ async function renderCombinedSectionModule(step, sections, moduleStepCount) {
 }
 
 async function renderSectionModule(step, moduleDef) {
-  const responsesResp = await fetch(`/api/session/${state.token}/modules/${step.key}/responses`);
+  const responsesResp = await sessionApiFetch(`/api/session/${state.token}/modules/${step.key}/responses`);
   const responsesPayload = responsesResp.ok ? await responsesResp.json() : { responses: [] };
   const responses = responsesPayload.responses || [];
 
@@ -1453,7 +1570,7 @@ async function renderSectionModule(step, moduleDef) {
                 answer: option,
                 correctAnswer
               };
-              const saveResp = await fetch(`/api/session/${state.token}/modules/${step.key}/answer`, {
+              const saveResp = await sessionApiFetch(`/api/session/${state.token}/modules/${step.key}/answer`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(payload)
@@ -1724,12 +1841,7 @@ async function loadSession() {
   }
 
   try {
-    const response = await fetch(`/api/session/${state.token}`);
-    if (response.status === 401) {
-      renderPlaceholder("המפגש נעול. יש להתחבר עם שם משתמש וסיסמת מנהל כדי לצפות בקישור זה.");
-      statusText.textContent = "המפגש נעול - נדרשת התחברות מנהל";
-      return;
-    }
+    const response = await sessionApiFetch(`/api/session/${state.token}`);
     if (!response.ok) {
       renderPlaceholder("לא נמצא מפגש עבור הקישור הזה.");
       statusText.textContent = "קישור לא תקין. פנו לחוקר לקבלת קישור חדש.";
@@ -1737,6 +1849,19 @@ async function loadSession() {
     }
 
     const data = await response.json();
+    if (data?.locked) {
+      state.session = null;
+      state.steps = [];
+      if (statusText) {
+        statusText.textContent = "המפגש נעול";
+      }
+      if (sessionLabel) {
+        sessionLabel.textContent = "המפגש נעול";
+      }
+      await renderLockedSessionScreen(data.lockState, data.lockFormKey);
+      return;
+    }
+
     state.session = data;
     state.steps = data.steps || [];
     state.completionRequested = false;
@@ -1759,7 +1884,7 @@ async function loadSession() {
 }
 
 async function fetchPersonaMessages(sessionPersonaId) {
-  const response = await fetch(`/api/session/${state.token}/persona/${sessionPersonaId}/messages`);
+  const response = await sessionApiFetch(`/api/session/${state.token}/persona/${sessionPersonaId}/messages`);
   if (!response.ok) {
     return { messages: [], conversationId: null, firstMessageAt: null, midPromptSent: false, feedbackPromptSent: false };
   }
@@ -1777,7 +1902,7 @@ async function sendChatMessage(userMessage, step) {
   setLoadingState(true);
 
   try {
-    const response = await fetch(`/api/session/${state.token}/message`, {
+    const response = await sessionApiFetch(`/api/session/${state.token}/message`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json"

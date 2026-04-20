@@ -537,12 +537,35 @@ export function saveFormResponse({ participantId, sessionNumber, formKey, respon
   const db = getDb();
   const payload = JSON.stringify(responses ?? {});
   const createdAt = nowGmtPlus3Iso();
+  const normalizedFormKey = String(formKey || "");
   return new Promise((resolve, reject) => {
+    // Completion confirmation should be captured exactly once per session.
+    // Repeated button presses must not replace the original confirmation timestamp.
+    if (normalizedFormKey === "session_completion_confirmed") {
+      const selectSql = `SELECT id FROM form_responses WHERE participant_id = ? AND session_number = ? AND form_key = 'session_completion_confirmed' AND IFNULL(session_persona_id, -1) = IFNULL(?, -1) LIMIT 1`;
+      db.get(selectSql, [participantId, sessionNumber, sessionPersonaId], (getErr, row) => {
+        if (getErr) return reject(getErr);
+        if (row && row.id) {
+          return resolve(row.id);
+        }
+
+        db.run(
+          "INSERT INTO form_responses (participant_id, session_number, form_key, responses_json, session_persona_id, created_at) VALUES (?, ?, 'session_completion_confirmed', ?, ?, ?)",
+          [participantId, sessionNumber, payload, sessionPersonaId, createdAt],
+          function onInsert(err) {
+            if (err) return reject(err);
+            resolve(this.lastID);
+          }
+        );
+      });
+      return;
+    }
+
     // For the consent form we want to preserve the original completion timestamp.
     // If a consent response already exists for this participant/session (and persona if provided),
     // update the stored responses JSON but keep the original created_at. For other forms,
     // continue to replace prior responses as before.
-    if (String(formKey) === "consent") {
+    if (normalizedFormKey === "consent") {
       const selectSql = `SELECT id FROM form_responses WHERE participant_id = ? AND session_number = ? AND form_key = 'consent' AND IFNULL(session_persona_id, -1) = IFNULL(?, -1) LIMIT 1`;
       db.get(selectSql, [participantId, sessionNumber, sessionPersonaId], (getErr, row) => {
         if (getErr) return reject(getErr);
@@ -896,7 +919,7 @@ export function listIncompleteSessionsForAdmin() {
       AND consent.session_number = s.session_number
     WHERE s.completed_at IS NULL
       AND s.status != 'completed'
-      AND CAST(strftime('%s', consent.consent_completed_at) AS INTEGER) < CAST(strftime('%s', 'now', '-1 hour') AS INTEGER)
+      AND CAST(strftime('%s', consent.consent_completed_at) AS INTEGER) < CAST(strftime('%s', 'now', '-2 hour') AS INTEGER)
     ORDER BY consent.consent_completed_at DESC
   `;
 

@@ -1,0 +1,8 @@
+{
+  "key": "session_locked_consent_expired",
+  "title": "מפגש זה עבר את הזמן הקצוב לו",
+  "paragraphs": [
+    "אם ישנו צורך לפתוח את המפגש מחדש, פנו למנהלת המחקר"
+  ],
+  "buttonText": "כניסת מנהל"
+}
