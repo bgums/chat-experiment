@@ -177,9 +177,51 @@ function getSessionSteps(session) {
 
 function shouldIncludeFeedbackForSession(session) {
   if (!session) return false;
+  return session.groupAssignment === "experimental";
+}
+
+function shouldIncludePreFeedbackInstructionForSession(session) {
+  if (!session) return false;
   const isExperimental = session.groupAssignment === "experimental";
   const sessionNumber = Number(session.sessionNumber);
-  return isExperimental && sessionNumber >= 2 && sessionNumber <= 4;
+  return isExperimental && sessionNumber === 1;
+}
+
+function isSessionOneExperimental(session) {
+  if (!session) return false;
+  return session.groupAssignment === "experimental" && Number(session.sessionNumber) === 1;
+}
+
+function getLastPersonaId(personas) {
+  if (!Array.isArray(personas) || !personas.length) return null;
+  const sorted = [...personas].sort((a, b) => {
+    const orderDiff = Number(a?.personaOrder || 0) - Number(b?.personaOrder || 0);
+    if (orderDiff !== 0) return orderDiff;
+    return Number(a?.id || 0) - Number(b?.id || 0);
+  });
+  return Number(sorted[sorted.length - 1]?.id || 0) || null;
+}
+
+async function isFeedbackAllowedForPersona(session, sessionPersonaId) {
+  if (!shouldIncludeFeedbackForSession(session)) return false;
+  if (!isSessionOneExperimental(session)) return true;
+
+  const personas = await getSessionPersonas(session.sessionId);
+  const lastPersonaId = getLastPersonaId(personas);
+  return Number(sessionPersonaId) === Number(lastPersonaId);
+}
+
+async function hasPostChatFormForPersona(session, sessionPersonaId) {
+  if (!session?.participantId || !session?.sessionNumber || !sessionPersonaId) return false;
+
+  const responses = await listFormResponses({
+    participantId: session.participantId,
+    sessionNumber: session.sessionNumber,
+  });
+
+  return (responses || []).some((row) =>
+    row.formKey === "post_chat" && Number(row.sessionPersonaId) === Number(sessionPersonaId)
+  );
 }
 
 function combineChatPrompt(personaObj, includeMid = false) {
@@ -1226,6 +1268,8 @@ app.get("/api/session/:token", async (req, res) => {
     await maybeMarkSessionCompleted(session);
 
     const includeFeedbackSteps = shouldIncludeFeedbackForSession(session);
+    const restrictFeedbackToLastPersona = isSessionOneExperimental(session);
+    const lastPersonaId = restrictFeedbackToLastPersona ? getLastPersonaId(persistedPersonas) : null;
     const personaSteps = (persistedPersonas || []).flatMap((personaRow) => {
       const personaData = withPersonaDisplay(personaRow.personaJson);
       const personaMeta = {
@@ -1249,9 +1293,20 @@ app.get("/api/session/:token", async (req, res) => {
         { type: "chat", kind: "persona", order: personaRow.personaOrder, ...personaMeta },
         { type: "form", key: "post_chat", kind: "post_chat", order: personaRow.personaOrder + 0.25, ...personaMeta }
       ];
-      if (includeFeedbackSteps) {
+      const includeFeedbackForPersona = includeFeedbackSteps
+        && (!restrictFeedbackToLastPersona || Number(personaRow.id) === Number(lastPersonaId));
+
+      if (includeFeedbackForPersona) {
+        const includePreFeedbackInstruction = shouldIncludePreFeedbackInstructionForSession(session);
+        if (includePreFeedbackInstruction) {
+          steps.push(
+            { type: "participant_instruction", key: "pre_feedback", kind: "pre_feedback_instruction", order: personaRow.personaOrder + 0.5, ...personaMeta }
+          );
+        }
+
+        const feedbackOrder = includePreFeedbackInstruction ? 0.6 : 0.5;
         steps.push(
-          { type: "feedback", kind: "persona_feedback", order: personaRow.personaOrder + 0.5, ...personaMeta },
+          { type: "feedback", kind: "persona_feedback", order: personaRow.personaOrder + feedbackOrder, ...personaMeta },
           { type: "form", key: "post_feedback", kind: "post_feedback", order: personaRow.personaOrder + 0.75, ...personaMeta }
         );
       }
@@ -1308,6 +1363,11 @@ app.post("/api/session/:token/forms/:formKey", async (req, res) => {
     if (!allowed && personaFormKeys.has(formKey)) {
       allowed = Boolean(requestedSessionPersonaId);
     }
+    if (allowed && formKey === "post_feedback") {
+      allowed = requestedSessionPersonaId
+        ? await isFeedbackAllowedForPersona(session, requestedSessionPersonaId)
+        : false;
+    }
     if (!allowed) {
       return res.status(400).json({ error: "Form not part of this session." });
     }
@@ -1353,6 +1413,11 @@ app.get("/api/session/:token/forms/:formKey", async (req, res) => {
     let allowed = steps.some((step) => step.type === "form" && step.key === formKey);
     if (!allowed && personaFormKeys.has(formKey)) {
       allowed = Boolean(requestedSessionPersonaId);
+    }
+    if (allowed && formKey === "post_feedback") {
+      allowed = requestedSessionPersonaId
+        ? await isFeedbackAllowedForPersona(session, requestedSessionPersonaId)
+        : false;
     }
     if (!allowed) {
       return res.status(400).json({ error: "Form not part of this session." });
@@ -1717,6 +1782,15 @@ app.post("/api/session/:token/persona/:sessionPersonaId/feedback", async (req, r
     const personaRecord = await getSessionPersona(Number(sessionPersonaId));
     if (!personaRecord || personaRecord.sessionId !== session.sessionId) {
       return res.status(404).json({ error: "Persona not found for this session." });
+    }
+    const feedbackAllowedForPersona = await isFeedbackAllowedForPersona(session, sessionPersonaId);
+    if (!feedbackAllowedForPersona) {
+      return res.status(400).json({ error: "Feedback is not part of this session flow." });
+    }
+
+    const postChatCompleted = await hasPostChatFormForPersona(session, sessionPersonaId);
+    if (!postChatCompleted) {
+      return res.status(400).json({ error: "Post-chat form must be completed before feedback." });
     }
 
     const existingMessages = await listMessagesBySessionPersona(sessionPersonaId);
