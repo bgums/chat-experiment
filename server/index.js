@@ -535,6 +535,15 @@ async function maybeMarkSessionCompleted(session) {
   const steps = getSessionSteps(session);
   const hasChat = steps.some((step) => step.type === "chat");
   const moduleSteps = steps.filter((step) => step.type === "module" && step.key);
+  const formResponses = await listFormResponses({
+    participantId: session.participantId,
+    sessionNumber: session.sessionNumber
+  });
+  const reachedCompletionScreen = formResponses.some((row) =>
+    row.formKey === "session_completion" && (row.sessionPersonaId == null || row.sessionPersonaId === "")
+  );
+
+  if (!reachedCompletionScreen) return false;
 
   if (hasChat) {
     const personas = await getSessionPersonas(session.sessionId);
@@ -1702,6 +1711,31 @@ app.post("/api/session/:token/complete", async (req, res) => {
   } catch (error) {
     console.error("Failed to mark session complete", error);
     res.status(500).json({ error: error?.message || "Could not complete session." });
+  }
+});
+
+app.post("/api/session/:token/completion-viewed", async (req, res) => {
+  try {
+    const sessionToken = req.params.token;
+    const session = await getSessionByToken(sessionToken);
+    if (!session) {
+      return res.status(404).json({ error: "Session not found." });
+    }
+
+    await saveFormResponse({
+      participantId: session.participantId,
+      sessionNumber: session.sessionNumber,
+      formKey: "session_completion",
+      responses: {
+        viewedAt: nowGmtPlus3Iso()
+      },
+      sessionPersonaId: null
+    });
+
+    res.json({ ok: true });
+  } catch (error) {
+    console.error("Failed to record completion screen view", error);
+    res.status(500).json({ error: error?.message || "Could not record completion screen view." });
   }
 });
 

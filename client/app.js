@@ -34,7 +34,8 @@ const state = {
   currentStepIndex: 0,
   conversationId: null,
   personas: {},
-  completionRequested: false
+  completionRequested: false,
+  completionScreenRecorded: false
 };
 
 const CHAT_DURATION_MINUTES = 8;
@@ -307,6 +308,22 @@ async function renderSessionCompletionScreen() {
 
   stepContainer.innerHTML = "";
   stepContainer.appendChild(wrapper);
+
+  if (!state.token || state.completionScreenRecorded) {
+    await markSessionComplete();
+    return;
+  }
+
+  try {
+    const response = await fetch(`/api/session/${state.token}/completion-viewed`, { method: "POST" });
+    if (response.ok) {
+      state.completionScreenRecorded = true;
+    }
+  } catch (error) {
+    console.warn("Failed to record completion screen view", error);
+  }
+
+  await markSessionComplete();
 }
 
 function renderForm(formDef, step = {}, savedResponses = {}) {
@@ -993,11 +1010,10 @@ async function renderCurrentStep() {
   }
 
   if (!step) {
-    await markSessionComplete();
     if (stepForwardBtn) {
       stepForwardBtn.disabled = true;
     }
-    renderSessionCompletionScreen();
+    await renderSessionCompletionScreen();
     return;
   }
 
