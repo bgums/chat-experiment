@@ -9,6 +9,7 @@ import { createConversation, createResponse } from "./openaiClient.js";
 import { extractTextFromResponse } from "./utils/extractText.js";
 import {
   createInvite,
+  createSessionPersonas,
   getSessionByToken,
   getParticipantByCode,
   listParticipants,
@@ -39,7 +40,7 @@ import {
   deleteParticipantByCode,
   updateSessionScheduleLockByToken
 } from "./db.js";
-import { ensureSessionPersonas, buildPersonaPrompt } from "./utils/personaLoader.js";
+import { ensureSessionPersonas, buildPersonaPrompt, getAllPersonas } from "./utils/personaLoader.js";
 import { nowGmtPlus3Iso } from "./utils/timezone.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -703,6 +704,89 @@ function findModuleSectionAndQuestion(moduleDef, sectionId, questionId) {
   };
 }
 
+function shuffleArray(values) {
+  const result = [...values];
+  for (let i = result.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [result[i], result[j]] = [result[j], result[i]];
+  }
+  return result;
+}
+
+function groupPersonasByGroupKey(personas) {
+  const grouped = new Map();
+  (personas || []).forEach((persona) => {
+    const key = String(persona?.group ?? "").trim();
+    if (!key) return;
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key).push(persona);
+  });
+  return grouped;
+}
+
+function buildPersonaRowsForGroup(groupedPersonas, groupKey) {
+  const personas = groupedPersonas.get(groupKey) || [];
+  const randomized = shuffleArray(personas);
+  return randomized.map((persona, idx) => ({
+    personaCsvId: Number(persona?.patient_id || idx + 1),
+    order: idx + 1,
+    name: persona?.name || `Persona ${idx + 1}`,
+    data: persona
+  }));
+}
+
+function buildBalancedBatchPlan(groupKeys) {
+  const normalizedGroups = (groupKeys || []).map((g) => String(g)).filter(Boolean);
+  if (!normalizedGroups.length) {
+    throw new Error("No persona groups were found for balanced batch allocation.");
+  }
+
+  const armSize = normalizedGroups.length;
+  const experimentalBase = shuffleArray(normalizedGroups);
+  const controlSession1Base = shuffleArray(normalizedGroups);
+  const controlSession4Base = shuffleArray(normalizedGroups);
+  const readingBase = shuffleArray(Array.from({ length: armSize }, (_, idx) => idx));
+
+  const experimentalParticipants = Array.from({ length: armSize }, (_, idx) => {
+    const sessionGroupMap = {
+      1: experimentalBase[(idx + 0) % armSize],
+      2: experimentalBase[(idx + 1) % armSize],
+      3: experimentalBase[(idx + 2) % armSize],
+      4: experimentalBase[(idx + 3) % armSize]
+    };
+    return {
+      groupAssignment: "experimental",
+      readingOrder: "withdrawal_first",
+      sessionGroupMap
+    };
+  });
+
+  const controlParticipants = Array.from({ length: armSize }, (_, idx) => {
+    const readingOrder = readingBase[idx] % 2 === 0 ? "withdrawal_first" : "confrontation_first";
+    const sessionGroupMap = {
+      1: controlSession1Base[idx],
+      4: controlSession4Base[idx]
+    };
+    return {
+      groupAssignment: "control",
+      readingOrder,
+      sessionGroupMap
+    };
+  });
+
+  const participants = [];
+  for (let i = 0; i < armSize; i += 1) {
+    participants.push(experimentalParticipants[i]);
+    participants.push(controlParticipants[i]);
+  }
+
+  return {
+    armSize,
+    totalParticipants: participants.length,
+    participants
+  };
+}
+
 app.use("/api/admin", adminAuth);
 
 app.post("/api/admin/invite", async (req, res) => {
@@ -748,6 +832,70 @@ app.post("/api/admin/invite", async (req, res) => {
   } catch (error) {
     console.error("Failed to create invite", error);
     res.status(500).json({ error: error?.message || "Could not create invite." });
+  }
+});
+
+app.post("/api/admin/invite-balanced-batch", async (req, res) => {
+  try {
+    const allPersonas = getAllPersonas();
+    const groupedPersonas = groupPersonasByGroupKey(allPersonas);
+    const groupKeys = Array.from(groupedPersonas.keys());
+    const plan = buildBalancedBatchPlan(groupKeys);
+
+    const origin = req.get("origin") || `${req.protocol}://${req.get("host")}`;
+    const createdParticipants = [];
+
+    for (const slot of plan.participants) {
+      const invite = await createInvite({
+        groupAssignment: slot.groupAssignment,
+        readingOrder: slot.readingOrder
+      });
+
+      const participantSessions = await listSessionsByParticipant(invite.participantId);
+      for (const participantSession of participantSessions) {
+        const assignedGroup = slot.sessionGroupMap[String(participantSession.sessionNumber)]
+          || slot.sessionGroupMap[participantSession.sessionNumber]
+          || null;
+        if (!assignedGroup) continue;
+
+        const personas = buildPersonaRowsForGroup(groupedPersonas, assignedGroup);
+        if (!personas.length) {
+          throw new Error(`No personas available for group ${assignedGroup}.`);
+        }
+
+        await createSessionPersonas({
+          sessionId: participantSession.sessionId,
+          participantId: invite.participantId,
+          sessionNumber: participantSession.sessionNumber,
+          personas
+        });
+      }
+
+      const sessions = invite.sessionTokens.map(({ sessionNumber, token }) => ({
+        sessionNumber,
+        token,
+        url: `${origin}/?token=${token}`,
+        path: `/?token=${token}`
+      }));
+
+      createdParticipants.push({
+        participantCode: invite.participantCode,
+        groupAssignment: slot.groupAssignment,
+        readingOrder: slot.readingOrder,
+        sessionGroupMap: slot.sessionGroupMap,
+        sessions
+      });
+    }
+
+    return res.json({
+      ok: true,
+      smallestBalancedBatchPerArm: plan.armSize,
+      totalParticipants: plan.totalParticipants,
+      participants: createdParticipants
+    });
+  } catch (error) {
+    console.error("Failed to create balanced batch", error);
+    return res.status(500).json({ error: error?.message || "Could not create balanced batch." });
   }
 });
 

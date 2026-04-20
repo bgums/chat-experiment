@@ -2,6 +2,7 @@ const subjectsPanel = document.getElementById("subjects-panel");
 const problemsPanel = document.getElementById("problems-panel");
 const groupSelect = document.getElementById("group-select");
 const createParticipantForm = document.getElementById("create-participant-form");
+const createBalancedBatchForm = document.getElementById("create-balanced-batch-form");
 const resetSessionForm = document.getElementById("reset-session-form");
 const resetSessionTokenInput = document.getElementById("reset-session-token");
 const scheduleLockForm = document.getElementById("schedule-lock-form");
@@ -759,6 +760,37 @@ createParticipantForm?.addEventListener("submit", async (event) => {
     await refreshAllPanels();
   } catch (error) {
     setManagementMessage(error.message || "שגיאה ביצירה.", true);
+  }
+});
+
+createBalancedBatchForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  setManagementMessage("יוצר באץ' מאוזן מינימלי...");
+  try {
+    const response = await fetch("/api/admin/invite-balanced-batch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({})
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload?.error || "שגיאה ביצירת באץ' מאוזן.");
+
+    const rows = (payload.participants || []).map((participant, idx) => {
+      const links = (participant.sessions || [])
+        .map((s) => `S${escapeHtml(s.sessionNumber)}: <a href="/?token=${encodeURIComponent(s.token)}" target="_blank" rel="noopener">פתח</a>`)
+        .join(" · ");
+      const assignmentLabel = participant.groupAssignment === "experimental" ? "E" : "C";
+      return `<li><strong>${idx + 1}. ${assignmentLabel}</strong> · ${escapeHtml(participant.participantCode)}<br>${links}</li>`;
+    }).join("");
+
+    const perArm = Number(payload.smallestBalancedBatchPerArm) || 0;
+    const total = Number(payload.totalParticipants) || 0;
+    const header = `נוצר באץ' מאוזן: ${escapeHtml(total)} משתתפים (${escapeHtml(perArm)} בכל זרוע), בסדר E/C לסירוגין.`;
+    const html = `${header}<ol style="margin:8px 0 0 18px;padding:0;display:flex;flex-direction:column;gap:8px;">${rows}</ol>`;
+    setManagementMessage(html, false, true);
+    await refreshAllPanels();
+  } catch (error) {
+    setManagementMessage(error.message || "שגיאה ביצירת באץ' מאוזן.", true);
   }
 });
 
