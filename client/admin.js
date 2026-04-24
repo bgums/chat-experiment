@@ -105,6 +105,16 @@ function escapeHtml(text) {
     .replace(/'/g, "&#039;");
 }
 
+function getSessionActionIcon(iconKey) {
+  const icons = {
+    email: '<svg class="session-action-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3.75 6.75h16.5a1.5 1.5 0 0 1 1.5 1.5v7.5a1.5 1.5 0 0 1-1.5 1.5H3.75a1.5 1.5 0 0 1-1.5-1.5v-7.5a1.5 1.5 0 0 1 1.5-1.5Z" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/><path d="m3 7.5 9 6 9-6" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    view: '<svg class="session-action-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="6.5" stroke="currentColor" stroke-width="1.75"/><path d="m16 16 5 5" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/></svg>',
+    open: '<svg class="session-action-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M10.5 7.5h-3A2.25 2.25 0 0 0 5.25 9.75v6A2.25 2.25 0 0 0 7.5 18h6a2.25 2.25 0 0 0 2.25-2.25v-3" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/><path d="M13.5 4.5H19.5V10.5" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/><path d="m10.5 13.5 9-9" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/></svg>',
+    token: '<svg class="session-action-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="8" cy="12" r="3.25" stroke="currentColor" stroke-width="1.75"/><path d="M11.25 12h10.5" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/><path d="M17.25 10.5v3" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/><path d="M20.25 10.5v3" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/></svg>'
+  };
+  return icons[iconKey] || icons.open;
+}
+
 function toDatetimeLocal(iso) {
   if (!iso) return "";
   const d = new Date(iso);
@@ -245,9 +255,10 @@ function renderSubjectsPanel() {
             <div class="session-cell">
               <span class="session-number">${escapeHtml(session.sessionNumber)}</span>
               <div class="session-actions">
-                <button class="copy-email-btn session-action-btn" aria-label="העתק אימייל" data-token="${escapeHtml(session.token || "")}" data-session="${escapeHtml(session.sessionNumber)}" data-code="${escapeHtml(participant.participantCode)}">אימייל</button>
-                ${session.token ? `<a class="session-action-btn" href="/?token=${encodeURIComponent(session.token)}" target="_blank" rel="noopener">פתח</a>` : ""}
-                <button class="copy-token-btn session-action-btn" aria-label="העתק טוקן" data-token="${escapeHtml(session.token || "")}">טוקן</button>
+                <button class="copy-email-btn session-action-btn" aria-label="העתק אימייל" data-token="${escapeHtml(session.token || "")}" data-session="${escapeHtml(session.sessionNumber)}" data-code="${escapeHtml(participant.participantCode)}">${getSessionActionIcon("email")}<span class="sr-only">אימייל</span></button>
+                ${session.token ? `<a class="session-action-btn" aria-label="תצוגת משתתף" href="/admin/view?token=${encodeURIComponent(session.token)}&mode=view_only" target="_blank" rel="noopener">${getSessionActionIcon("view")}<span class="sr-only">תצוגה</span></a>` : ""}
+                ${session.token ? `<a class="session-action-btn" aria-label="פתח מפגש" href="/?token=${encodeURIComponent(session.token)}" target="_blank" rel="noopener">${getSessionActionIcon("open")}<span class="sr-only">פתח</span></a>` : ""}
+                <button class="copy-token-btn session-action-btn" aria-label="העתק טוקן" data-token="${escapeHtml(session.token || "")}">${getSessionActionIcon("token")}<span class="sr-only">טוקן</span></button>
               </div>
             </div>
           </td>

@@ -1,5 +1,7 @@
 const urlParams = new URLSearchParams(window.location.search);
 const token = urlParams.get("token");
+const mode = String(urlParams.get("mode") || "").toLowerCase();
+const isReadOnlyMode = mode === "view_only";
 
 const participantPanel = document.getElementById("participant-panel");
 const statusText = document.getElementById("status-text");
@@ -29,6 +31,7 @@ let nextBtnRef = null;
 
 const state = {
   token,
+  isReadOnly: isReadOnlyMode,
   session: null,
   steps: [],
   currentStepIndex: 0,
@@ -124,7 +127,7 @@ async function fetchSavedFormResponses(formKey, step = {}) {
 }
 
 async function markSessionComplete() {
-  if (!state.token || state.completionRequested) return;
+  if (!state.token || state.completionRequested || state.isReadOnly) return;
   state.completionRequested = true;
   try {
     await sessionApiFetch(`/api/session/${state.token}/complete`, { method: "POST" });
@@ -135,6 +138,9 @@ async function markSessionComplete() {
 
 function sessionApiFetch(url, options = {}) {
   const headers = new Headers(options.headers || {});
+  if (state.isReadOnly && !headers.has("x-session-view-only")) {
+    headers.set("x-session-view-only", "1");
+  }
   if (state.sessionAdminAuthHeader && !headers.has("Authorization")) {
     headers.set("Authorization", state.sessionAdminAuthHeader);
   }
@@ -223,6 +229,7 @@ const startChatTimer = (startIso) => {
 };
 
 const scheduleMidPrime = (startIso, sessionPersonaId) => {
+  if (state.isReadOnly) return;
   if (midPrimeTimeout) {
     clearTimeout(midPrimeTimeout);
     midPrimeTimeout = null;
@@ -402,12 +409,17 @@ async function renderSessionCompletionScreen() {
   status.style.display = "none";
   wrapper.appendChild(status);
 
+  if (state.isReadOnly) {
+    status.textContent = "מצב תצוגה בלבד: לא מתבצעת שליחה לשרת.";
+    status.style.display = "block";
+  }
+
   const completeBtn = document.createElement("button");
   completeBtn.type = "button";
   completeBtn.className = "completion-submit-button";
   completeBtn.textContent = buttonText;
 
-  if (!state.token || state.completionRequested) {
+  if (!state.token || state.completionRequested || state.isReadOnly) {
     completeBtn.disabled = true;
   }
 
@@ -831,6 +843,14 @@ function renderForm(formDef, step = {}, savedResponses = {}) {
 
   applySavedResponses(savedResponses || {});
 
+  if (state.isReadOnly) {
+    setStatus("מצב תצוגה בלבד: לא ניתן לערוך או לשמור תשובות.", "muted");
+    formEl.querySelectorAll("input, textarea, select, button").forEach((el) => {
+      el.disabled = true;
+    });
+    return;
+  }
+
   const performSave = async ({ validate = false, showErrors = false } = {}) => {
     const { responses, missingRequired } = gatherResponses();
     if (validate && missingRequired.length) {
@@ -975,6 +995,12 @@ async function renderChat(step) {
   chatForm.appendChild(sendButton);
   chatSectionEl.appendChild(chatForm);
 
+  if (state.isReadOnly) {
+    messageInput.disabled = true;
+    sendButton.disabled = true;
+    sendButton.textContent = "תצוגה בלבד";
+  }
+
   stepContainer.appendChild(chatSectionEl);
 
   // Load history
@@ -1009,6 +1035,7 @@ async function renderChat(step) {
   // Attach event listeners now that elements exist
   chatForm.addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (state.isReadOnly) return;
     const rawValue = messageInput.value;
     const userMessage = rawValue && rawValue.trim().length ? rawValue : "";
     if (!userMessage || chatLocked) return;
@@ -1063,6 +1090,24 @@ async function renderFeedback(step, renderId) {
   card.appendChild(feedbackBody);
 
   stepContainer.appendChild(card);
+
+  if (state.isReadOnly) {
+    try {
+      const history = await fetchPersonaMessages(step.sessionPersonaId);
+      const feedbackMessage = (history?.messages || [])
+        .slice()
+        .reverse()
+        .find((message) => message.role === "assistant_feedback");
+      if (feedbackMessage?.content) {
+        feedbackBody.innerHTML = safeParseMarkdown(feedbackMessage.content, { mangle: false, headerIds: false, breaks: true });
+      } else {
+        feedbackBody.textContent = "אין פידבק שמור עבור שיחה זו.";
+      }
+    } catch (_error) {
+      feedbackBody.textContent = "לא ניתן לטעון פידבק שמור כרגע.";
+    }
+    return;
+  }
 
   let retryDelayMs = 1500;
   const maxWaitMs = 3 * 60 * 1000;
@@ -1340,7 +1385,7 @@ async function renderCombinedSectionModule(step, sections, moduleStepCount) {
         button.className = "ghost-button module-option-btn";
         button.textContent = option;
 
-        if (answerLocked) {
+        if (answerLocked || state.isReadOnly) {
           button.disabled = true;
           const isSelected = selectedAnswer === option;
           const isCorrectOption = correctAnswer != null && correctAnswer === option;
@@ -1431,10 +1476,10 @@ async function renderCombinedSectionModule(step, sections, moduleStepCount) {
     const hasPendingQuestions = questions.some(
       (question, idx) => !responseMap.has(`${section.section_id}::${getQuestionId(section, question, idx)}`)
     );
-    nextBtn.disabled = hasPendingQuestions;
+    nextBtn.disabled = state.isReadOnly ? false : hasPendingQuestions;
 
     nextBtn.addEventListener("click", async () => {
-      if (hasPendingQuestions) return;
+      if (hasPendingQuestions && !state.isReadOnly) return;
       if (!isLast) {
         activeSectionIndex += 1;
         drawSection();
@@ -1538,7 +1583,7 @@ async function renderSectionModule(step, moduleDef) {
         button.className = "ghost-button module-option-btn";
         button.textContent = option;
 
-        if (answerLocked) {
+        if (answerLocked || state.isReadOnly) {
           button.disabled = true;
           const isSelected = selectedAnswer === option;
           const isCorrectOption = correctAnswer != null && correctAnswer === option;
@@ -1629,10 +1674,10 @@ async function renderSectionModule(step, moduleDef) {
     const hasPendingQuestions = questions.some(
       (question, idx) => !responseMap.has(`${section.section_id}::${getQuestionId(section, question, idx)}`)
     );
-    nextBtn.disabled = hasPendingQuestions;
+    nextBtn.disabled = state.isReadOnly ? false : hasPendingQuestions;
 
     nextBtn.addEventListener("click", async () => {
-      if (hasPendingQuestions) return;
+      if (hasPendingQuestions && !state.isReadOnly) return;
       if (!isLast) {
         activeSectionIndex += 1;
         drawSection();
@@ -1737,6 +1782,11 @@ function drawLegacyModulePage() {
       btn.type = "button";
       btn.className = "ghost-button module-option-btn";
       btn.textContent = opt;
+      if (state.isReadOnly) {
+        btn.disabled = true;
+        optionsWrap.appendChild(btn);
+        return;
+      }
       btn.addEventListener("click", () => {
         const isCorrect = idx === page.correctIndex;
         moduleState.answered = true;
@@ -1782,7 +1832,7 @@ function drawLegacyModulePage() {
   nextBtn.className = "ghost-button";
   const isLast = lastChapter && lastPageInChapter;
   nextBtn.textContent = isLast ? "המשך לשלב הבא" : "הבא";
-  if (page.type === "quiz" && !moduleState.answered) {
+  if (page.type === "quiz" && !moduleState.answered && !state.isReadOnly) {
     nextBtn.disabled = true;
   }
   if (page.type === "quiz") {
@@ -1790,7 +1840,7 @@ function drawLegacyModulePage() {
   }
 
   nextBtn.addEventListener("click", () => {
-    if (page.type === "quiz" && !moduleState.answered) return;
+    if (page.type === "quiz" && !moduleState.answered && !state.isReadOnly) return;
     moduleState.answered = false;
     if (!lastPageInChapter) {
       moduleState.pageIndex += 1;
@@ -1872,6 +1922,9 @@ async function loadSession() {
       } else {
         statusText.textContent = `מפגש ${data.sessionNumber} מתוך ${data.totalSessions || "?"}`;
       }
+      if (state.isReadOnly) {
+        statusText.textContent += " · תצוגה בלבד (מנהל)";
+      }
     }
     if (sessionLabel) {
       sessionLabel.textContent = data.sessionLabel || `Session ${data.sessionNumber}`;
@@ -1892,6 +1945,9 @@ async function fetchPersonaMessages(sessionPersonaId) {
 }
 
 async function sendChatMessage(userMessage, step) {
+  if (state.isReadOnly) {
+    return;
+  }
   if (!step?.sessionPersonaId) {
     appendMessage("assistant", "**לא נמצא מזהה שיחה עבור המטופל הנוכחי.**");
     return;

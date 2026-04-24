@@ -112,6 +112,10 @@ function isAdminAuthorized(req) {
   return user === ADMIN_USER && pass === ADMIN_PASSWORD;
 }
 
+function isSessionViewOnlyRequest(req) {
+  return String(req.headers["x-session-view-only"] || "") === "1";
+}
+
 function getLockFormKey(lockCode) {
   if (lockCode === "session_completed") return "session_locked_completion";
   if (lockCode === "consent_expired") return "session_locked_consent_expired";
@@ -627,7 +631,25 @@ async function enforceLockedSessionAdmin(req, res, next) {
   }
 }
 
+function enforceSessionViewOnlyAdmin(req, res, next) {
+  const viewOnly = isSessionViewOnlyRequest(req);
+  req.sessionViewOnly = viewOnly;
+  if (!viewOnly) return next();
+
+  if (!isAdminAuthorized(req)) {
+    res.set("WWW-Authenticate", "Basic realm=admin");
+    return res.status(401).json({ error: "Admin credentials are required for view-only mode." });
+  }
+
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    return res.status(403).json({ error: "View-only mode does not allow write operations." });
+  }
+
+  return next();
+}
+
 app.use("/api/session/:token", enforceLockedSessionAdmin);
+app.use("/api/session/:token", enforceSessionViewOnlyAdmin);
 app.use("/forms-assets", express.static(formsDir));
 app.use(express.static(path.join(__dirname, "..", "client")));
 
@@ -1228,6 +1250,7 @@ app.get("/api/modules/:moduleKey", (req, res) => {
 
 app.get("/api/session/:token", async (req, res) => {
   try {
+    const isViewOnly = Boolean(req.sessionViewOnly);
     const sessionToken = req.params.token;
     const session = await getSessionByToken(sessionToken);
     if (!session) {
@@ -1253,18 +1276,22 @@ app.get("/api/session/:token", async (req, res) => {
 
     let persistedPersonas = [];
     if (hasChatSteps) {
-      await ensureSessionPersonas({
-        sessionId: session.sessionId,
-        participantId: session.participantId,
-        sessionNumber: session.sessionNumber,
-        participantCode: session.participantCode,
-        groupAssignment: session.groupAssignment
-      });
+      if (!isViewOnly) {
+        await ensureSessionPersonas({
+          sessionId: session.sessionId,
+          participantId: session.participantId,
+          sessionNumber: session.sessionNumber,
+          participantCode: session.participantCode,
+          groupAssignment: session.groupAssignment
+        });
+      }
       persistedPersonas = await getSessionPersonas(session.sessionId);
     }
 
-    await markSessionStarted(session.sessionId);
-    await maybeMarkSessionCompleted(session);
+    if (!isViewOnly) {
+      await markSessionStarted(session.sessionId);
+      await maybeMarkSessionCompleted(session);
+    }
 
     const includeFeedbackSteps = shouldIncludeFeedbackForSession(session);
     const restrictFeedbackToLastPersona = isSessionOneExperimental(session);
@@ -1881,6 +1908,10 @@ app.post("/api/session/:token/persona/:sessionPersonaId/feedback", async (req, r
 
 app.get("/admin", adminAuth, (_req, res) => {
   res.sendFile(path.join(__dirname, "..", "client", "admin.html"));
+});
+
+app.get("/admin/view", adminAuth, (_req, res) => {
+  res.sendFile(path.join(__dirname, "..", "client", "index.html"));
 });
 
 app.get("*", (req, res) => {
