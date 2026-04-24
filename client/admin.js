@@ -222,15 +222,31 @@ function renderSubjectsPanel() {
         <tr>
           ${idx === 0 ? (() => {
             const dtValue = escapeHtml(toDatetimeLocal(participant.scheduleStart || ''));
-            return `<td rowspan="${sessions.length}"><a href="#" class="id-link participant-link" data-code="${escapeHtml(participant.participantCode)}">${escapeHtml(participant.participantCode)}</a><div style="display:flex;flex-direction:column;gap:6px;margin-top:6px"><div style=\"display:flex;gap:6px;align-items:center\"><input type=\"datetime-local\" class=\"participant-meta-input scheduled-time-input\" data-id=\"${escapeHtml(participant.id)}\" value=\"${dtValue}\" style=\"min-width:180px;max-width:220px;\"><button class=\"reset-schedule-btn\" data-id=\"${escapeHtml(participant.id)}\" title=\"Clear schedule\">×</button></div><input class=\"participant-meta-input subject-id-input\" data-id=\"${escapeHtml(participant.id)}\" placeholder=\"מזהה נבדק\" value=\"${escapeHtml(participant.subjectId || '')}\"><input class=\"participant-meta-input subject-notes-input\" data-id=\"${escapeHtml(participant.id)}\" placeholder=\"הערות\" value=\"${escapeHtml(participant.notes || '')}\"></div></td>`;
+            const subj = escapeHtml(participant.subjectId || 'מזהה נבדק');
+            const groupLabel = participant.groupAssignment === 'control' ? 'ביקורת' : (participant.groupAssignment === 'experimental' ? 'ניסוי' : '');
+            return `<td rowspan="${sessions.length}">
+                <div style="display:flex;flex-direction:column;gap:6px;">
+                  <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+                    <span class="participant-subject-badge">${subj}</span>
+                    ${groupLabel ? `<span class="participant-group-badge">${escapeHtml(groupLabel)}</span>` : ''}
+                  </div>
+                  <div>
+                    <a href="#" class="id-link participant-link" data-code="${escapeHtml(participant.participantCode)}">${escapeHtml(participant.participantCode)}</a>
+                  </div>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:6px;margin-top:8px">
+                  <div style=\"display:flex;gap:6px;align-items:center\"><input type=\"datetime-local\" class=\"participant-meta-input scheduled-time-input\" data-id=\"${escapeHtml(participant.id)}\" value=\"${dtValue}\" style=\"min-width:180px;max-width:220px;\"><button class=\"reset-schedule-btn\" data-id=\"${escapeHtml(participant.id)}\" title=\"Clear schedule\">×</button></div>
+                  <input class=\"participant-meta-input subject-id-input\" data-id=\"${escapeHtml(participant.id)}\" placeholder=\"מזהה נבדק\" value=\"${escapeHtml(participant.subjectId || '')}\">
+                  <input class=\"participant-meta-input subject-notes-input\" data-id=\"${escapeHtml(participant.id)}\" placeholder=\"הערות\" value=\"${escapeHtml(participant.notes || '')}\">
+                </div>
+              </td>`;
           })() : ""}
-          ${idx === 0 ? `<td rowspan="${sessions.length}">${escapeHtml(participant.groupAssignment || "")}</td>` : ""}
           <td>
             <div class="session-cell">
               <span class="session-number">${escapeHtml(session.sessionNumber)}</span>
               <div class="session-actions">
-                ${session.token ? `<a class="session-action-btn" href="/?token=${encodeURIComponent(session.token)}" target="_blank" rel="noopener">פתח</a>` : ""}
                 <button class="copy-email-btn session-action-btn" aria-label="העתק אימייל" data-token="${escapeHtml(session.token || "")}" data-session="${escapeHtml(session.sessionNumber)}" data-code="${escapeHtml(participant.participantCode)}">אימייל</button>
+                ${session.token ? `<a class="session-action-btn" href="/?token=${encodeURIComponent(session.token)}" target="_blank" rel="noopener">פתח</a>` : ""}
                 <button class="copy-token-btn session-action-btn" aria-label="העתק טוקן" data-token="${escapeHtml(session.token || "")}">טוקן</button>
               </div>
             </div>
@@ -245,11 +261,10 @@ function renderSubjectsPanel() {
   });
 
   subjectsPanel.innerHTML = `
-    <table class="admin-table">
+      <table class="admin-table">
       <thead>
         <tr>
           <th>Participant ID</th>
-          <th>Group</th>
           <th>Session</th>
             <th>Scheduled Time</th>
             <th>Session Start Time</th>
@@ -928,6 +943,15 @@ subjectsPanel?.addEventListener("input", (event) => {
   const td = target.closest && target.closest('td');
   const participantId = target.dataset.id || (td && td.querySelector && td.querySelector('.subject-id-input')?.dataset?.id) || null;
   if (!participantId) return;
+  // Update the subject badge live in the participant cell
+  try {
+    const cellForBadge = td || document.querySelector(`.subject-id-input[data-id="${participantId}"]`)?.closest('td');
+    const currentSubj = cellForBadge ? (cellForBadge.querySelector('.subject-id-input')?.value || '') : (document.querySelector(`.subject-id-input[data-id="${participantId}"]`)?.value || '');
+    const badgeEl = cellForBadge ? cellForBadge.querySelector('.participant-subject-badge') : null;
+    if (badgeEl) badgeEl.textContent = currentSubj || 'מזהה נבדק';
+  } catch (e) {
+    // ignore
+  }
 
   scheduleSaveForInput(participantId, () => {
     const cell = td || document.querySelector(`.subject-id-input[data-id="${participantId}"]`)?.closest('td');
