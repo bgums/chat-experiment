@@ -42,7 +42,7 @@
     },
     {
       "section_id": "step_2_disengage_from_the_emphasis_and_redirect_attention_to_the_rupture_marker",
-      "order_number": 4,
+      "order_number": 3,
       "title": "שלב 2: היחלצות מן ההטעמה והפניית קשב לסמן הקרע",
       "content": [
         "בשלב זה, המטפלים מתחילים להפנות תשומת לב לקרע עצמו ולבסס מיקוד ב\"כאן-ועכשיו\" של הקשר הטיפולי. ",
@@ -56,7 +56,7 @@
     },
     {
       "section_id": "step_2_disengage_from_the_emphasis_and_redirect_attention_to_the_rupture_marker_question_1",
-      "order_number": 5,
+      "order_number": 4,
       "title": "שלב 2: היחלצות מן ההטעמה והפניית קשב לסמן הקרע",
       "content": [],
       "questions": [
@@ -74,7 +74,7 @@
     },
     {
       "section_id": "step_2_disengage_from_the_emphasis_and_redirect_attention_to_the_rupture_marker_question_2",
-      "order_number": 6,
+      "order_number": 5,
       "title": "שלב 2: היחלצות מן ההטעמה והפניית קשב לסמן הקרע",
       "content": [],
       "questions": [
@@ -92,7 +92,7 @@
     },
     {
       "section_id": "step_2_disengage_from_the_emphasis_and_redirect_attention_to_the_rupture_marker_question_3",
-      "order_number": 7,
+      "order_number": 6,
       "title": "שלב 2: היחלצות מן ההטעמה והפניית קשב לסמן הקרע",
       "content": [],
       "questions": [
@@ -110,7 +110,7 @@
     },
     {
       "section_id": "step_3_qualified_assertiveness",
-      "order_number": 8,
+      "order_number": 7,
       "title": "שלב 3: אסרטיביות מסויגת",
       "content": [
         "בשלב של **אסרטיביות מסויגת**, המטופל מתחיל לבטא מחשבות ורגשות הקשורים לחוויית הקרע. עם זאת, ביטויים אלה עדיין מעורבים במאפיינים של סמן הקרע הראשוני. לדוגמה, המטופל עשוי להתחיל לבטא רגשות שליליים, אך אז לסייג את דבריו או לחזור בהם (למשל: \"אני מרגישה קצת מעוצבנת, אבל זה לא ביג דיל\"). בשלב זה המטופל מתקרב יותר למגע עם משאלות בסיסיות שבדרך כלל נושאות אופי של הבעה עצמית ואסרטיביות, ולעיתים קרובות כרוכות ברגשות כעס, אולם לבסוף הוא נסוג מרגשות אלו.",
@@ -123,7 +123,7 @@
     },
     {
       "section_id": "step_3_qualified_assertiveness_question_1",
-      "order_number": 9,
+      "order_number": 8,
       "title": "שלב 3: אסרטיביות מסויגת",
       "content": [],
       "questions": [
@@ -141,7 +141,7 @@
     },
     {
       "section_id": "step_4_avoidance",
-      "order_number": 10,
+      "order_number": 9,
       "title": "שלב 4: הימנעות",
       "content": [
         "בתהליך איחוי טיפוסי, חקירת **מסלול ההתנסות/החוויה** מתקדמת עד לנקודה מסוימת ואז נחסמת. חסימה זו ניכרת בכך שהמטופל מתחיל להשתמש באסטרטגיות התמודדות, באמירות ובפעולות הגנתיות שמטרתן להימנע מן הרגשות הקשורים לחוויית הקרע. דוגמאות לאסטרטגיות כאלה כוללות שינוי נושא, דיבור בטון קול מרוחק וכדומה. **מסלול ההימנעות** כולל חקירה שיטתית של אמונות, ציפיות ותהליכים פנימיים אחרים שמעכבים את ההכרה וההבעה של רגשות וצרכים.",
@@ -155,7 +155,7 @@
     },
     {
       "section_id": "step_4_avoidance_question_1",
-      "order_number": 11,
+      "order_number": 10,
       "title": "שלב 4: הימנעות",
       "content": [],
       "questions": [
@@ -174,7 +174,7 @@
     },
     {
       "section_id": "step_5_self_assertiveness",
-      "order_number": 12,
+      "order_number": 11,
       "title": "שלב 5: אסרטיביות עצמית",
       "content": [
         "בשלב 5, המטופל יוצר מגע עם צרכים בסיסיים ומביע אותם באופן ישיר מול המטפל. פעולה זו של אסרטיביות עצמית יכולה להיות מומשגת כהבעה של **המשאלה הבסיסית**.",
@@ -186,7 +186,7 @@
     },
     {
       "section_id": "step_5_self_assertiveness_question_1",
-      "order_number": 13,
+      "order_number": 12,
       "title": "שלב 5: אסרטיביות עצמית",
       "content": [],
       "questions": [
@@ -204,7 +204,7 @@
     },
     {
       "section_id": "clinical_demonstration",
-      "order_number": 14,
+      "order_number": 13,
       "title": "הדגמה קלינית",
       "content": [
         "כדי להבהיר עוד יותר את מודל איחוי קרעי הנסיגה, נמחיש אותו באמצעות התמליל הבא מתוך הפגישה החמישית בטיפול. המטופלת, ליזה, הייתה אישה בת 32 שפנתה לטיפול בשל תחושת חוסר כיוון כללית בחייה, וכן בשל קושי ספציפי ביצירת קשר רומנטי ארוך-טווח עם גבר ובשמירה עליו. להיסטוריה האישית שלה היו מאפיינים משמעותיים של נטישה: אביה עזב את המשפחה כשהייתה בת שמונה, ואמה נפטרה מסרטן כאשר ליזה הייתה בגיל ההתבגרות. ליזה פתחה את הפגישה החמישית בהודעה כי לוח הזמנים שלה בעבודה אינו יציב, ולכן יהיה לה קשה להתחייב לפגישה קבועה."
@@ -214,7 +214,7 @@
     },
     {
       "section_id": "clinical_demonstration_2",
-      "order_number": 15,
+      "order_number": 14,
       "title": "הדגמה קלינית",
       "content": [
         "**שלב 1: סמן נסיגה**",
@@ -226,7 +226,7 @@
     },
     {
       "section_id": "clinical_demonstration_2_question_1",
-      "order_number": 16,
+      "order_number": 15,
       "title": "הדגמה קלינית",
       "content": [],
       "questions": [
@@ -244,7 +244,7 @@
     },
     {
       "section_id": "clinical_demonstration_3",
-      "order_number": 17,
+      "order_number": 16,
       "title": "הדגמה קלינית",
       "content": [
         "**שלב 2: היחלצות והפניית קשב לקרע**",
@@ -256,7 +256,7 @@
     },
     {
       "section_id": "clinical_demonstration_3_question_1",
-      "order_number": 18,
+      "order_number": 17,
       "title": "הדגמה קלינית",
       "content": [],
       "questions": [
@@ -267,7 +267,7 @@
             "הדבר אפשר לליזה להזדהות עם התחושות שהמטפל תיאר ולשתף לגבי תחושתה האישית של ספק לגבי הטיפול.",
             "שתי התשובות נכונות."
           ],
-          "correct_answer_index": 3,
+          "correct_answer_index": 2,
           "parent_section_id": "clinical_demonstration_3"
         }
       ],
@@ -275,7 +275,7 @@
     },
     {
       "section_id": "clinical_demonstration_5",
-      "order_number": 21,
+      "order_number": 18,
       "title": "הדגמה קלינית",
       "content": [
         "**שלב 4: הימנעות**",
@@ -292,7 +292,7 @@
     },
     {
       "section_id": "clinical_demonstration_4_question_1",
-      "order_number": 20,
+      "order_number": 19,
       "title": "הדגמה קלינית",
       "content": [],
       "questions": [
@@ -302,7 +302,7 @@
             "מכיוון שהיא מתחילה להשתמש במונחים כלליים כדי לתאר את התחושות שלה, ולכן למרות שהיא מבטאת רצון אותנטי, זה יוצא לא ברור",
             "מכיוון שבכך שליזה אומרת \"אולי אני לא באמת נותנת לזה צ'אנס\", היא נמנעת מביטוי הרצון המאיים להגיד למטפל שהיא רוצה לסיים את הטיפול"
           ],
-          "correct_answer_index": 2,
+          "correct_answer_index": 1,
           "parent_section_id": "clinical_demonstration_4"
         }
       ],
@@ -310,7 +310,7 @@
     },
     {
       "section_id": "clinical_demonstration_6",
-      "order_number": 22,
+      "order_number": 20,
       "title": "הדגמה קלינית",
       "content": [
         "**שלב 5: אסרטיביות עצמית**",
@@ -323,7 +323,7 @@
     },
     {
       "section_id": "clinical_demonstration_6_question_1",
-      "order_number": 23,
+      "order_number": 21,
       "title": "הדגמה קלינית",
       "content": [],
       "questions": [
@@ -342,7 +342,7 @@
     },
     {
       "section_id": "clinical_demonstration_7",
-      "order_number": 24,
+      "order_number": 22,
       "title": "הדגמה קלינית",
       "content": [
         "**שלב 4: הימנעות**",
@@ -355,7 +355,7 @@
     },
     {
       "section_id": "clinical_demonstration_7_question_2",
-      "order_number": 26,
+      "order_number": 23,
       "title": "הדגמה קלינית",
       "content": [],
       "questions": [
@@ -366,7 +366,7 @@
             "שהיא מנסה להבין האם המטפל מחויב מבחינה מקצועית לעזור לה בכל מצב.",
             "שהיא שואלת את המטפל שאלה כללית על הסיבות שבגללן אנשים עוזרים זה לזה."
           ],
-          "correct_answer_index": 1,
+          "correct_answer_index": 0,
           "parent_section_id": "clinical_demonstration_7"
         }
       ],
@@ -374,7 +374,7 @@
     },
     {
       "section_id": "summary",
-      "order_number": 27,
+      "order_number": 24,
       "title": "סיכום",
       "content": [
         "בפרק זה למדנו על מודל איחוי קרעים מסוג נסיגה. שלבי מודל זה הם (1) סמן נסיגה: נסיגה מצד המטופל, (2) היחלצות מן ההיטמעות: יציאה של המטפל מסכמת היחסים שאליה נקלע עם המטופל על מנת להבין יחד את הסיטואציה, (3) אסרטיביות מסויגת: הבעה מסויגת של צרכי המטופל, (4) הימנעות: חקירת ההימנעות של המטופל, (5) אסרטיביות עצמית: הבעה ישירה ותקשורתית של צרכי המטופל, באופן פגיע ובלתי מסויג. ",
