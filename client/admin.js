@@ -227,7 +227,7 @@ function renderSubjectsPanel() {
             return `<td rowspan="${sessions.length}">
                 <div style="display:flex;flex-direction:column;gap:6px;">
                   <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
-                    <span class="participant-subject-badge">${subj}</span>
+                    <span class="participant-subject-badge" contenteditable="true" data-id="${escapeHtml(participant.id)}">${subj}</span>
                     ${groupLabel ? `<span class="participant-group-badge">${escapeHtml(groupLabel)}</span>` : ''}
                   </div>
                   <div>
@@ -236,8 +236,8 @@ function renderSubjectsPanel() {
                 </div>
                 <div style="display:flex;flex-direction:column;gap:6px;margin-top:8px">
                   <div style=\"display:flex;gap:6px;align-items:center\"><input type=\"datetime-local\" class=\"participant-meta-input scheduled-time-input\" data-id=\"${escapeHtml(participant.id)}\" value=\"${dtValue}\" style=\"min-width:180px;max-width:220px;\"><button class=\"reset-schedule-btn\" data-id=\"${escapeHtml(participant.id)}\" title=\"Clear schedule\">×</button></div>
-                  <input class=\"participant-meta-input subject-id-input\" data-id=\"${escapeHtml(participant.id)}\" placeholder=\"מזהה נבדק\" value=\"${escapeHtml(participant.subjectId || '')}\">
-                  <input class=\"participant-meta-input subject-notes-input\" data-id=\"${escapeHtml(participant.id)}\" placeholder=\"הערות\" value=\"${escapeHtml(participant.notes || '')}\">
+                  <input class=\"participant-meta-input subject-id-input\" data-id=\"${escapeHtml(participant.id)}\" placeholder=\"מזהה נבדק\" value=\"${escapeHtml(participant.subjectId || '')}\" style=\"display:none\">
+                  <textarea class=\"participant-meta-input subject-notes-input\" data-id=\"${escapeHtml(participant.id)}\" placeholder=\"הערות\">${escapeHtml(participant.notes || '')}</textarea>
                 </div>
               </td>`;
           })() : ""}
@@ -937,25 +937,38 @@ subjectsPanel?.addEventListener("click", async (event) => {
 subjectsPanel?.addEventListener("input", (event) => {
   const target = event.target;
   if (!target) return;
-  const isSubject = target.classList && (target.classList.contains("subject-id-input") || target.classList.contains("subject-notes-input") || target.classList.contains("scheduled-time-input"));
+  const isSubject = target.classList && (
+    target.classList.contains("subject-id-input") ||
+    target.classList.contains("subject-notes-input") ||
+    target.classList.contains("scheduled-time-input") ||
+    target.classList.contains("participant-subject-badge")
+  );
   if (!isSubject) return;
 
   const td = target.closest && target.closest('td');
   const participantId = target.dataset.id || (td && td.querySelector && td.querySelector('.subject-id-input')?.dataset?.id) || null;
   if (!participantId) return;
-  // Update the subject badge live in the participant cell
-  try {
-    const cellForBadge = td || document.querySelector(`.subject-id-input[data-id="${participantId}"]`)?.closest('td');
-    const currentSubj = cellForBadge ? (cellForBadge.querySelector('.subject-id-input')?.value || '') : (document.querySelector(`.subject-id-input[data-id="${participantId}"]`)?.value || '');
-    const badgeEl = cellForBadge ? cellForBadge.querySelector('.participant-subject-badge') : null;
-    if (badgeEl) badgeEl.textContent = currentSubj || 'מזהה נבדק';
-  } catch (e) {
-    // ignore
+
+  // If the editable badge changed, copy its text into the hidden input so existing save logic works
+  if (target.classList && target.classList.contains('participant-subject-badge')) {
+    const newVal = target.textContent?.trim() || '';
+    const hiddenInput = td ? td.querySelector('.subject-id-input') : document.querySelector(`.subject-id-input[data-id="${participantId}"]`);
+    if (hiddenInput) hiddenInput.value = newVal;
+  } else {
+    // If the (hidden) input changed, reflect it into the badge (keeps consistency)
+    try {
+      const cellForBadge = td || document.querySelector(`.subject-id-input[data-id="${participantId}"]`)?.closest('td');
+      const currentSubj = cellForBadge ? (cellForBadge.querySelector('.subject-id-input')?.value || '') : (document.querySelector(`.subject-id-input[data-id="${participantId}"]`)?.value || '');
+      const badgeEl = cellForBadge ? cellForBadge.querySelector('.participant-subject-badge') : null;
+      if (badgeEl) badgeEl.textContent = currentSubj || 'מזהה נבדק';
+    } catch (e) {
+      // ignore
+    }
   }
 
   scheduleSaveForInput(participantId, () => {
     const cell = td || document.querySelector(`.subject-id-input[data-id="${participantId}"]`)?.closest('td');
-    const subj = cell ? (cell.querySelector('.subject-id-input')?.value || '') : (document.querySelector(`.subject-id-input[data-id="${participantId}"]`)?.value || '');
+    const subj = cell ? (cell.querySelector('.subject-id-input')?.value || (cell.querySelector('.participant-subject-badge')?.textContent || '')) : (document.querySelector(`.subject-id-input[data-id="${participantId}"]`)?.value || (document.querySelector(`.participant-subject-badge[data-id="${participantId}"]`)?.textContent || ''));
     const notes = cell ? (cell.querySelector('.subject-notes-input')?.value || '') : (document.querySelector(`.subject-notes-input[data-id="${participantId}"]`)?.value || '');
     const scheduleValLocal = cell ? (cell.querySelector('.scheduled-time-input')?.value || '') : (document.querySelector(`.scheduled-time-input[data-id="${participantId}"]`)?.value || '');
     const scheduleIso = scheduleValLocal ? toIsoFromLocal(scheduleValLocal) : null;
@@ -985,6 +998,45 @@ subjectsPanel?.addEventListener("change", async (event) => {
 messageSessionFilter?.addEventListener("change", () => {
   if (!currentParticipantDetails) return;
   renderSessionDetails(currentParticipantDetails, messageSessionFilter.value || "all");
+});
+
+// Prevent Enter from inserting newlines in the editable subject badge; blur to commit
+subjectsPanel?.addEventListener('keydown', (event) => {
+  const t = event.target;
+  if (!t || !t.classList) return;
+  if (!t.classList.contains('participant-subject-badge')) return;
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    t.blur();
+  }
+});
+
+// When the editable badge loses focus, restore placeholder if empty and save
+subjectsPanel?.addEventListener('focusout', (event) => {
+  const t = event.target;
+  if (!t || !t.classList) return;
+  if (!t.classList.contains('participant-subject-badge')) return;
+
+  const participantId = t.dataset.id || (t.closest && t.closest('td') && t.closest('td').querySelector?.('.subject-id-input')?.dataset?.id) || null;
+  // If badge emptied, restore placeholder text
+  if ((t.textContent || '').trim() === '') {
+    t.textContent = 'מזהה נבדק';
+    // update hidden input if present
+    const td = t.closest && t.closest('td');
+    const hiddenInput = td ? td.querySelector('.subject-id-input') : (participantId ? document.querySelector(`.subject-id-input[data-id="${participantId}"]`) : null);
+    if (hiddenInput) hiddenInput.value = '';
+  }
+
+  // Trigger save using existing debounced save function
+  if (!participantId) return;
+  scheduleSaveForInput(participantId, () => {
+    const cell = t.closest('td') || document.querySelector(`.subject-id-input[data-id="${participantId}"]`)?.closest('td');
+    const subj = cell ? (cell.querySelector('.subject-id-input')?.value || (cell.querySelector('.participant-subject-badge')?.textContent || '')) : (document.querySelector(`.subject-id-input[data-id="${participantId}"]`)?.value || (document.querySelector(`.participant-subject-badge[data-id="${participantId}"]`)?.textContent || ''));
+    const notes = cell ? (cell.querySelector('.subject-notes-input')?.value || '') : (document.querySelector(`.subject-notes-input[data-id="${participantId}"]`)?.value || '');
+    const scheduleValLocal = cell ? (cell.querySelector('.scheduled-time-input')?.value || '') : (document.querySelector(`.scheduled-time-input[data-id="${participantId}"]`)?.value || '');
+    const scheduleIso = scheduleValLocal ? toIsoFromLocal(scheduleValLocal) : null;
+    return { subjectId: subj, notes, scheduleStart: scheduleIso };
+  });
 });
 
 qaRefreshBtn?.addEventListener("click", async (event) => {

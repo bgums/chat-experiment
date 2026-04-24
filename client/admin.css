@@ -109,6 +109,28 @@ body {
   font-size: 0.85rem;
   border: 1px solid var(--admin-border);
 }
+
+.participant-subject-badge {
+  cursor: text;
+}
+.participant-subject-badge:focus {
+  outline: 2px solid rgba(37,99,235,0.18);
+  outline-offset: 2px;
+}
+
+/* Make notes editable area multiline and resizable */
+.participant-meta-input.subject-notes-input {
+  display: block;
+  width: 100%;
+  min-height: 56px;
+  padding: 8px 10px;
+  box-sizing: border-box;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(16,34,58,0.06);
+  border-radius: 8px;
+  resize: vertical;
+  color: var(--admin-text);
+}
   border-radius: 10px;
   background: var(--admin-surface);
   padding: 0;
