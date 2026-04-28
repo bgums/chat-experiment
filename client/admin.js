@@ -8,6 +8,9 @@ const resetSessionTokenInput = document.getElementById("reset-session-token");
 const scheduleLockForm = document.getElementById("schedule-lock-form");
 const scheduleLockTokenInput = document.getElementById("schedule-lock-token");
 const scheduleLockModeSelect = document.getElementById("schedule-lock-mode");
+const adminUnlockForm = document.getElementById("admin-unlock-form");
+const adminUnlockTokenInput = document.getElementById("admin-unlock-token");
+const adminUnlockModeSelect = document.getElementById("admin-unlock-mode");
 const deleteParticipantForm = document.getElementById("delete-participant-form");
 const deleteParticipantCodeInput = document.getElementById("delete-participant-code");
 const managementResult = document.getElementById("management-result");
@@ -753,6 +756,24 @@ async function updateScheduleLockByToken(token, scheduleLockDisabled) {
   setManagementMessage(`Session ${escapeHtml(payload.sessionNumber)} (${escapeHtml(payload.participantCode)}): ${stateText}`, false, true);
 }
 
+async function updateAdminUnlockByToken(token, adminUnlocked) {
+  if (!token) return;
+  const response = await fetch("/api/admin/session/admin-unlock", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token, adminUnlocked })
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload?.error || "שגיאה בעדכון נעילת מנהל.");
+  }
+
+  const stateText = payload?.adminUnlocked
+    ? "נעילת המפגש בוטלה (המפגש פתוח)"
+    : "נעילת המפגש מופעלת (המפגש נעול)";
+  setManagementMessage(`Session ${escapeHtml(payload.sessionNumber)} (${escapeHtml(payload.participantCode)}): ${stateText}`, false, true);
+}
+
 async function loadSessionOptions() {
   if (!groupSelect) return;
   const response = await fetch("/api/admin/session-options");
@@ -855,6 +876,24 @@ scheduleLockForm?.addEventListener("submit", async (event) => {
     await refreshAllPanels();
   } catch (error) {
     setManagementMessage(error.message || "שגיאה בעדכון נעילת הלו\"ז.", true);
+  }
+});
+
+adminUnlockForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const token = (adminUnlockTokenInput?.value || "").trim();
+  if (!token) {
+    setManagementMessage("יש להזין session token.", true);
+    return;
+  }
+
+  const adminUnlocked = (adminUnlockModeSelect?.value || "unlock") === "unlock";
+  try {
+    await updateAdminUnlockByToken(token, adminUnlocked);
+    if (adminUnlockTokenInput) adminUnlockTokenInput.value = "";
+    await refreshAllPanels();
+  } catch (error) {
+    setManagementMessage(error.message || "שגיאה בעדכון נעילת מנהל.", true);
   }
 });
 

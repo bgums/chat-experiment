@@ -38,7 +38,8 @@ import {
   listScheduleLockDisabledSessionsForAdmin,
   listPersonaSessionDistribution,
   deleteParticipantByCode,
-  updateSessionScheduleLockByToken
+  updateSessionScheduleLockByToken,
+  updateSessionAdminUnlockByToken
 } from "./db.js";
 import { ensureSessionPersonas, buildPersonaPrompt, getAllPersonas } from "./utils/personaLoader.js";
 import { nowGmtPlus3Iso } from "./utils/timezone.js";
@@ -562,6 +563,11 @@ async function getSessionLockState(session) {
     return { locked: false, reason: null, code: null };
   }
 
+  // Admin override: if session is admin-unlocked, ignore all lock conditions
+  if (session.adminUnlocked) {
+    return { locked: false, reason: null, code: null };
+  }
+
   if (session.sessionStatus === "completed" || session.completedAt) {
     return { locked: true, reason: "Session flow is complete.", code: "session_completed" };
   }
@@ -1041,6 +1047,31 @@ app.post("/api/admin/session/schedule-lock", async (req, res) => {
   } catch (error) {
     console.error("Failed to update session schedule-lock override", error);
     return res.status(500).json({ error: error?.message || "Could not update session schedule-lock override." });
+  }
+});
+
+app.post("/api/admin/session/admin-unlock", async (req, res) => {
+  try {
+    const token = String(req.body?.token || "").trim();
+    if (!token) {
+      return res.status(400).json({ error: "Session token is required." });
+    }
+
+    const adminUnlocked = Boolean(req.body?.adminUnlocked);
+    const updated = await updateSessionAdminUnlockByToken(token, adminUnlocked);
+    if (!updated) {
+      return res.status(404).json({ error: "Session not found for token." });
+    }
+
+    return res.json({
+      ok: true,
+      participantCode: updated.participantCode,
+      sessionNumber: updated.sessionNumber,
+      adminUnlocked: updated.adminUnlocked
+    });
+  } catch (error) {
+    console.error("Failed to update session admin-unlock override", error);
+    return res.status(500).json({ error: error?.message || "Could not update session admin-unlock override." });
   }
 });
 

@@ -67,6 +67,15 @@
             <button type="submit">עדכן נעילת לו"ז</button>
           </form>
 
+          <form id="admin-unlock-form" class="admin-form">
+            <input id="admin-unlock-token" name="token" type="text" required placeholder="Session token" />
+            <select id="admin-unlock-mode" name="adminUnlockMode">
+              <option value="unlock">בטל את הנעילה (הסר הגבלה של 2 שעות)</option>
+              <option value="lock">הפעל נעילה (מחזיר הגבלה של 2 שעות)</option>
+            </select>
+            <button type="submit">עדכן פתיחת מנהל</button>
+          </form>
+
           <form id="delete-participant-form" class="admin-form">
             <input id="delete-participant-code" name="participantCode" type="text" required placeholder="Participant code" />
             <button class="danger" type="submit">מחק משתתף</button>

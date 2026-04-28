@@ -234,6 +234,9 @@ function createDatabase() {
     ensureColumnExists(db, "sessions", "schedule_lock_disabled", "INTEGER DEFAULT 0").catch((err) =>
       console.error("Failed to add schedule_lock_disabled column", err)
     );
+    ensureColumnExists(db, "sessions", "admin_unlocked", "INTEGER DEFAULT 0").catch((err) =>
+      console.error("Failed to add admin_unlocked column", err)
+    );
   });
   return db;
 }
@@ -307,6 +310,7 @@ export function listParticipants() {
       s.status AS session_status,
       s.scheduled_for,
       s.schedule_lock_disabled,
+      s.admin_unlocked,
       s.started_at,
       s.completed_at,
       consent.consent_completed_at,
@@ -366,6 +370,7 @@ export function listParticipants() {
             status: sessionStatus,
             scheduledFor: row.scheduled_for || null,
             scheduleLockDisabled: Boolean(Number(row.schedule_lock_disabled) || 0),
+            adminUnlocked: Boolean(Number(row.admin_unlocked) || 0),
             startedAt: row.started_at,
             completedAt: row.completed_at,
             consentCompletedAt: row.consent_completed_at,
@@ -406,6 +411,7 @@ export function listSessionsByParticipant(participantId) {
         s.status AS status,
         s.scheduled_for AS scheduledFor,
         s.schedule_lock_disabled AS scheduleLockDisabled,
+        s.admin_unlocked AS adminUnlocked,
         s.started_at AS startedAt,
         s.completed_at AS completedAt,
            consent.consent_completed_at AS consentCompletedAt,
@@ -455,7 +461,7 @@ export function getSessionByToken(sessionToken) {
   const db = getDb();
   const query = `
     SELECT s.id AS session_id, s.session_number, s.status AS session_status, s.conversation_id,
-          s.scheduled_for, s.schedule_lock_disabled, s.started_at, s.completed_at, p.id AS participant_id, p.participant_code, p.total_sessions, p.status AS participant_status,
+          s.scheduled_for, s.schedule_lock_disabled, s.admin_unlocked, s.started_at, s.completed_at, p.id AS participant_id, p.participant_code, p.total_sessions, p.status AS participant_status,
           p.group_assignment, p.reading_order
     FROM sessions s
     JOIN participants p ON p.id = s.participant_id
@@ -475,6 +481,7 @@ export function getSessionByToken(sessionToken) {
         conversationId: row.conversation_id,
         scheduledFor: row.scheduled_for || null,
         scheduleLockDisabled: Boolean(Number(row.schedule_lock_disabled) || 0),
+        adminUnlocked: Boolean(Number(row.admin_unlocked) || 0),
         startedAt: row.started_at,
         completedAt: row.completed_at,
         participantId: row.participant_id,
@@ -1246,6 +1253,42 @@ export function updateSessionScheduleLockByToken(sessionToken, scheduleLockDisab
               sessionNumber: row.sessionNumber,
               participantCode: row.participantCode,
               scheduleLockDisabled: Boolean(normalized)
+            });
+          }
+        );
+      }
+    );
+  });
+}
+
+export function updateSessionAdminUnlockByToken(sessionToken, adminUnlocked) {
+  const db = getDb();
+  const normalized = adminUnlocked ? 1 : 0;
+
+  return new Promise((resolve, reject) => {
+    db.get(
+      `SELECT s.id AS sessionId,
+              s.session_number AS sessionNumber,
+              p.participant_code AS participantCode
+       FROM sessions s
+       JOIN participants p ON p.id = s.participant_id
+       WHERE s.session_token = ?
+       LIMIT 1`,
+      [sessionToken],
+      (selectErr, row) => {
+        if (selectErr) return reject(selectErr);
+        if (!row) return resolve(null);
+
+        db.run(
+          "UPDATE sessions SET admin_unlocked = ? WHERE id = ?",
+          [normalized, row.sessionId],
+          function onUpdate(updateErr) {
+            if (updateErr) return reject(updateErr);
+            resolve({
+              sessionId: row.sessionId,
+              sessionNumber: row.sessionNumber,
+              participantCode: row.participantCode,
+              adminUnlocked: Boolean(normalized)
             });
           }
         );
