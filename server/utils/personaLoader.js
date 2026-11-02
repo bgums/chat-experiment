@@ -229,17 +229,13 @@ function buildSessionGroupPlan({ allPersonas, participantSeed, participantSessio
     .filter((n) => Number.isFinite(n))
     .sort((a, b) => a - b);
 
-  const targetSessionNumbers = groupAssignment === "control"
-    ? sessionNumbers.filter((n) => n === 1 || n === 4)
-    : sessionNumbers;
+  const targetSessionNumbers = sessionNumbers;
 
   if (!targetSessionNumbers.length) {
     return new Map();
   }
 
-  const selectedGroupKeys = groupAssignment === "control"
-    ? allGroupKeys.slice(0, Math.max(1, Math.floor(allGroupKeys.length / 2)))
-    : allGroupKeys;
+  const selectedGroupKeys = allGroupKeys;
 
   const plan = new Map(targetSessionNumbers.map((sessionNum) => [sessionNum, []]));
   selectedGroupKeys.forEach((groupKey, idx) => {
@@ -252,7 +248,7 @@ function buildSessionGroupPlan({ allPersonas, participantSeed, participantSessio
   return plan;
 }
 
-export async function ensureSessionPersonas({ sessionId, participantId, sessionNumber, participantCode, groupAssignment = "experimental" }) {
+export async function ensureSessionPersonas({ sessionId, participantId, sessionNumber, participantCode, groupAssignment = "experiment" }) {
   const existing = await getSessionPersonas(sessionId);
   if (existing && existing.length) return existing;
 

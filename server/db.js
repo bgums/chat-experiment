@@ -14,7 +14,7 @@ let dbInstance = null;
 
 function ensureColumnExists(db, table, column, definition) {
   return new Promise((resolve, reject) => {
-    db.all(`PRAGMA table_info(${table})`, [], (err, rows) => {
+    db.all(`PRAGMA table_xinfo(${table})`, [], (err, rows) => {
       if (err) return reject(err);
       const exists = (rows || []).some((row) => row.name === column);
       if (exists) return resolve(true);
@@ -85,6 +85,30 @@ function createDatabase() {
   ensureDirectoryExists(DB_PATH);
   const db = new sqlite3.Database(DB_PATH);
   db.serialize(() => {
+    db.run(`CREATE TABLE IF NOT EXISTS practice_rounds (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      participant_id INTEGER NOT NULL REFERENCES participants(id),
+      session_id INTEGER NOT NULL REFERENCES sessions(id),
+      session_persona_id INTEGER NOT NULL REFERENCES session_personas(id),
+      round_number INTEGER NOT NULL,
+      plan_json TEXT NOT NULL,
+      config_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(session_persona_id, round_number)
+    )`);
+    db.run(`CREATE TABLE IF NOT EXISTS practice_attempts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      round_id INTEGER NOT NULL REFERENCES practice_rounds(id),
+      attempt_number INTEGER NOT NULL,
+      therapist_message TEXT NOT NULL,
+      patient_message TEXT NOT NULL,
+      feedback TEXT NOT NULL,
+      sufficient INTEGER NOT NULL,
+      summary TEXT NOT NULL,
+      evaluation_prompt_hash TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(round_id, attempt_number)
+    )`);
     db.run(`
       CREATE TABLE IF NOT EXISTS participants (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -93,8 +117,7 @@ function createDatabase() {
         schedule_start TEXT,
         notes TEXT,
         total_sessions INTEGER DEFAULT 4,
-        group_assignment TEXT DEFAULT 'experimental',
-        reading_order TEXT DEFAULT 'withdrawal_first',
+        [group] TEXT NOT NULL DEFAULT 'experiment',
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         status TEXT DEFAULT 'invited'
       )
@@ -185,60 +208,36 @@ function createDatabase() {
     `);
   });
 
-  // Lightweight migrations for existing databases
-  db.serialize(() => {
-    ensureColumnExists(db, "participants", "group_assignment", "TEXT DEFAULT 'experimental'").catch((err) =>
-      console.error("Failed to add group_assignment column", err)
-    );
-    ensureColumnExists(db, "participants", "reading_order", "TEXT DEFAULT 'withdrawal_first'").catch((err) =>
-      console.error("Failed to add reading_order column", err)
-    );
-    ensureColumnExists(db, "participants", "subject_id", "TEXT").catch((err) =>
-      console.error("Failed to add subject_id column", err)
-    );
-    ensureColumnExists(db, "participants", "schedule_start", "TEXT").catch((err) =>
-      console.error("Failed to add schedule_start column", err)
-    );
-    ensureColumnExists(db, "participants", "notes", "TEXT").catch((err) =>
-      console.error("Failed to add notes column", err)
-    );
-    ensureColumnExists(db, "messages", "session_persona_id", "INTEGER").catch((err) =>
-      console.error("Failed to add session_persona_id column", err)
-    );
-    ensureColumnExists(db, "messages", "conversation_id", "TEXT").catch((err) =>
-      console.error("Failed to add conversation_id column", err)
-    );
-    ensureColumnExists(db, "form_responses", "session_persona_id", "INTEGER").catch((err) =>
-      console.error("Failed to add session_persona_id column to form_responses", err)
-    );
-    ensureColumnExists(db, "sessions", "scheduled_for", "TEXT")
-      .then(() => {
-        db.all(
-          "SELECT id, schedule_start FROM participants",
-          [],
-          (selectErr, participants) => {
-            if (selectErr) {
-              console.error("Failed to load participants for schedule backfill", selectErr);
-              return;
-            }
-
-            (participants || []).forEach((participant) => {
-              syncSessionSchedulesForParticipant(db, participant.id, participant.schedule_start).catch((err) =>
-                console.error(`Failed to backfill session schedule for participant ${participant.id}`, err)
-              );
-            });
-          }
-        );
-      })
-      .catch((err) => console.error("Failed to add scheduled_for column", err));
-    ensureColumnExists(db, "sessions", "schedule_lock_disabled", "INTEGER DEFAULT 0").catch((err) =>
-      console.error("Failed to add schedule_lock_disabled column", err)
-    );
-    ensureColumnExists(db, "sessions", "admin_unlocked", "INTEGER DEFAULT 0").catch((err) =>
-      console.error("Failed to add admin_unlocked column", err)
-    );
-  });
   return db;
+}
+
+export function practiceQuery(sql, params = []) {
+  return new Promise((resolve, reject) => getDb().all(sql, params, (error, rows) => error ? reject(error) : resolve(rows)));
+}
+
+export function practiceRun(sql, params = []) {
+  return new Promise((resolve, reject) => getDb().run(sql, params, function(error) {
+    if (error) reject(error); else resolve({ id: this.lastID, changes: this.changes });
+  }));
+}
+
+export async function listPracticeRounds(participantId, personaId = null) {
+  const rounds = await practiceQuery(`SELECT r.*, p.[group] AS "group", s.session_number
+    FROM practice_rounds r JOIN participants p ON p.id = r.participant_id
+    JOIN sessions s ON s.id = r.session_id WHERE r.participant_id = ?
+    ${personaId == null ? "" : "AND r.session_persona_id = ?"} ORDER BY r.id`,
+    personaId == null ? [participantId] : [participantId, personaId]);
+  for (const round of rounds) {
+    round.plan = JSON.parse(round.plan_json);
+    round.config = JSON.parse(round.config_json);
+    delete round.plan_json;
+    delete round.config_json;
+    round.attempts = await practiceQuery("SELECT * FROM practice_attempts WHERE round_id = ? ORDER BY attempt_number", [round.id]);
+    const last = round.attempts.at(-1);
+    round.status = last?.sufficient ? "mastered" : round.attempts.length >= round.config.maxAttemptsPerStrategy ? "attempt_limit" : "active";
+    round.completed_at = round.status === "active" ? null : last.created_at;
+  }
+  return rounds;
 }
 
 function getDb() {
@@ -248,20 +247,16 @@ function getDb() {
   return dbInstance;
 }
 
-export function createInvite({ groupAssignment = "experimental", readingOrder = "withdrawal_first" } = {}) {
+export function createInvite() {
   const db = getDb();
   const participantCode = randomUUID();
   const totalSessions = 4;
   const createdAt = nowGmtPlus3Iso();
-  const normalizedGroup = groupAssignment === "control" ? "control" : "experimental";
-  const normalizedReadingOrder = readingOrder === "confrontation_first"
-    ? "confrontation_first"
-    : "withdrawal_first";
 
   return new Promise((resolve, reject) => {
     db.run(
-      "INSERT INTO participants (participant_code, total_sessions, group_assignment, reading_order, created_at) VALUES (?, ?, ?, ?, ?)",
-      [participantCode, totalSessions, normalizedGroup, normalizedReadingOrder, createdAt],
+      "INSERT INTO participants (participant_code, total_sessions, [group], created_at) VALUES (?, ?, ?, ?)",
+      [participantCode, totalSessions, "experiment", createdAt],
       function insertParticipant(err) {
         if (err) return reject(err);
 
@@ -301,8 +296,7 @@ export function listParticipants() {
       p.participant_code,
       p.status,
       p.total_sessions,
-      p.group_assignment,
-      p.reading_order,
+      p.[group],
       p.created_at,
       s.id AS session_id,
       s.session_number,
@@ -348,8 +342,7 @@ export function listParticipants() {
               subjectId: row.subject_id || null,
               scheduleStart: row.schedule_start || null,
             notes: row.notes || null,
-            groupAssignment: row.group_assignment,
-            readingOrder: row.reading_order,
+            groupAssignment: row.group,
             createdAt: row.created_at,
             totalSessions: row.total_sessions,
             completedSessions: 0,
@@ -447,7 +440,7 @@ export function getParticipantByCode(participantCode) {
   const db = getDb();
   return new Promise((resolve, reject) => {
     db.get(
-      "SELECT id, participant_code AS participantCode, total_sessions AS totalSessions, status, group_assignment AS groupAssignment, reading_order AS readingOrder, schedule_start AS scheduleStart, created_at AS createdAt FROM participants WHERE participant_code = ?",
+      "SELECT id, participant_code AS participantCode, total_sessions AS totalSessions, status, [group] AS groupAssignment, schedule_start AS scheduleStart, created_at AS createdAt FROM participants WHERE participant_code = ?",
       [participantCode],
       (err, row) => {
         if (err) return reject(err);
@@ -462,7 +455,7 @@ export function getSessionByToken(sessionToken) {
   const query = `
     SELECT s.id AS session_id, s.session_number, s.status AS session_status, s.conversation_id,
           s.scheduled_for, s.schedule_lock_disabled, s.admin_unlocked, s.started_at, s.completed_at, p.id AS participant_id, p.participant_code, p.total_sessions, p.status AS participant_status,
-          p.group_assignment, p.reading_order
+          p.[group]
     FROM sessions s
     JOIN participants p ON p.id = s.participant_id
     WHERE s.session_token = ?
@@ -488,8 +481,7 @@ export function getSessionByToken(sessionToken) {
         participantCode: row.participant_code,
         participantStatus: row.participant_status,
         totalSessions: row.total_sessions,
-        groupAssignment: row.group_assignment,
-        readingOrder: row.reading_order
+        groupAssignment: row.group,
       });
     });
   });
@@ -623,7 +615,7 @@ export function saveFormResponse({ participantId, sessionNumber, formKey, respon
 export function listMessagesBySessionPersona(sessionPersonaId) {
   const db = getDb();
   const query = `
-    SELECT role, content, created_at
+    SELECT id, role, content, created_at
     FROM messages
     WHERE session_persona_id = ?
     ORDER BY id ASC
@@ -819,6 +811,7 @@ export function listAllFormResponses({ formKey } = {}) {
            fr.responses_json AS responsesJson,
            fr.session_persona_id AS sessionPersonaId,
            fr.created_at AS createdAt,
+           p.[group] AS "group",
            p.participant_code AS participantCode,
            sp.persona_name AS personaName,
            sp.persona_csv_id AS personaCsvId
@@ -842,6 +835,7 @@ export function listAllFormResponses({ formKey } = {}) {
         return {
           id: row.id,
           participantId: row.participantId,
+          group: row.group,
           participantCode: row.participantCode,
           sessionNumber: row.sessionNumber,
           formKey: row.formKey,
@@ -906,8 +900,9 @@ export function listIncompleteSessionsForAdmin() {
   const db = getDb();
   const query = `
     SELECT p.id AS participantId,
+           p.[group] AS "group",
            p.participant_code AS participantCode,
-           p.group_assignment AS groupAssignment,
+           p.[group] AS groupAssignment,
            s.id AS sessionId,
            s.session_number AS sessionNumber,
            s.session_token AS sessionToken,
@@ -942,8 +937,9 @@ export function listScheduleLockDisabledSessionsForAdmin() {
   const db = getDb();
   const query = `
     SELECT p.id AS participantId,
+           p.[group] AS "group",
            p.participant_code AS participantCode,
-           p.group_assignment AS groupAssignment,
+           p.[group] AS groupAssignment,
            s.id AS sessionId,
            s.session_number AS sessionNumber,
            s.session_token AS sessionToken,
@@ -969,8 +965,8 @@ export function listPersonaSessionDistribution({ groupAssignment } = {}) {
   const db = getDb();
   const params = [];
   const where = [];
-  if (groupAssignment === "control" || groupAssignment === "experimental") {
-    where.push("p.group_assignment = ?");
+  if (groupAssignment === "experiment") {
+    where.push("p.[group] = ?");
     params.push(groupAssignment);
   }
 
@@ -1188,6 +1184,8 @@ export function resetSessionByToken(sessionToken) {
           "DELETE FROM module_question_responses WHERE participant_id = ? AND session_number = ?",
           [session.participantId, session.sessionNumber]
         );
+        await runSql("DELETE FROM practice_attempts WHERE round_id IN (SELECT id FROM practice_rounds WHERE session_id = ?)", [session.sessionId]);
+        await runSql("DELETE FROM practice_rounds WHERE session_id = ?", [session.sessionId]);
         await runSql("DELETE FROM session_personas WHERE session_id = ?", [session.sessionId]);
 
         const participantSessions = await allSql(
@@ -1327,6 +1325,8 @@ export function deleteParticipantByCode(participantCode) {
         }
 
         await runSql("BEGIN TRANSACTION");
+        await runSql("DELETE FROM practice_attempts WHERE round_id IN (SELECT id FROM practice_rounds WHERE participant_id = ?)", [participant.id]);
+        await runSql("DELETE FROM practice_rounds WHERE participant_id = ?", [participant.id]);
         await runSql("DELETE FROM messages WHERE participant_id = ?", [participant.id]);
         await runSql("DELETE FROM form_responses WHERE participant_id = ?", [participant.id]);
         await runSql("DELETE FROM module_question_responses WHERE participant_id = ?", [participant.id]);
@@ -1350,6 +1350,9 @@ export function deleteParticipantByCode(participantCode) {
 export function resetDatabaseForDev() {
   const db = getDb();
   db.serialize(() => {
+    db.run("DELETE FROM practice_attempts");
+    db.run("DELETE FROM practice_rounds");
+    db.run("DELETE FROM session_personas");
     db.run("DELETE FROM messages");
     db.run("DELETE FROM form_responses");
     db.run("DELETE FROM module_question_responses");
@@ -1358,5 +1361,28 @@ export function resetDatabaseForDev() {
   });
 }
 
-// Initialize on import so tables exist before first request.
-getDb();
+// Complete schema migration sequentially before importers can serve requests.
+await practiceQuery("SELECT 1 FROM participants LIMIT 1");
+for (const [table, column, definition] of [
+  ["participants", "subject_id", "TEXT"],
+  ["participants", "schedule_start", "TEXT"],
+  ["participants", "notes", "TEXT"],
+  ["messages", "session_persona_id", "INTEGER"],
+  ["messages", "conversation_id", "TEXT"],
+  ["form_responses", "session_persona_id", "INTEGER"],
+  ["sessions", "scheduled_for", "TEXT"],
+  ["sessions", "schedule_lock_disabled", "INTEGER DEFAULT 0"],
+  ["sessions", "admin_unlocked", "INTEGER DEFAULT 0"]
+]) await ensureColumnExists(getDb(), table, column, definition);
+const participantColumns = await practiceQuery("PRAGMA table_xinfo(participants)");
+if (participantColumns.some(column => column.name === "group_assignment")) {
+  await practiceRun('ALTER TABLE participants RENAME COLUMN group_assignment TO "group"');
+}
+await ensureColumnExists(getDb(), "participants", "group", "TEXT NOT NULL DEFAULT 'experiment'");
+if (participantColumns.some(column => column.name === "reading_order")) {
+  await practiceRun("ALTER TABLE participants DROP COLUMN reading_order");
+}
+await practiceRun('UPDATE participants SET "group" = ? WHERE "group" = ?', ["experiment", "experimental"]);
+for (const participant of await practiceQuery("SELECT id, schedule_start FROM participants")) {
+  await syncSessionSchedulesForParticipant(getDb(), participant.id, participant.schedule_start);
+}

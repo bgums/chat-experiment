@@ -1,111 +1,93 @@
 {
   "defaultTotalSessions": 4,
-  "groups": {
-    "experimental": {
-      "label": "קבוצת ניסוי",
-      "sessions": [
+  "sessions": [
+    {
+      "session": 1,
+      "label": "מפגש ראשון",
+      "steps": [
         {
-          "session": 1,
-          "label": "מפגש ראשון",
-          "steps": [
-            { "type": "form", "key": "consent" },
-            { "type": "form", "key": "confidentiality_request" },
-            { "type": "form", "key": "demographics" },
-            { "type": "module", "key": "introduction_module" },
-            { "type": "chat" }
-          ]
+          "type": "form",
+          "key": "consent"
         },
         {
-          "session": 2,
-          "label": "מפגש שני",
-          "steps": [
-            { "type": "form", "key": "consent" },
-            { "type": "form", "key": "confidentiality_request" },
-            { "type": "chat" }
-          ]
+          "type": "form",
+          "key": "confidentiality_request"
         },
         {
-          "session": 3,
-          "label": "מפגש שלישי",
-          "steps": [
-            { "type": "form", "key": "consent" },
-            { "type": "form", "key": "confidentiality_request" },
-            { "type": "chat" }
-          ]
+          "type": "form",
+          "key": "demographics"
         },
         {
-          "session": 4,
-          "label": "מפגש רביעי",
-          "steps": [
-            { "type": "form", "key": "consent" },
-            { "type": "form", "key": "confidentiality_request" },
-            { "type": "chat" }
-          ]
+          "type": "module",
+          "key": "introduction_module"
+        },
+        {
+          "type": "chat"
         }
       ]
     },
-    "control": {
-      "label": "קבוצת ביקורת",
-      "sessions": [
+    {
+      "session": 2,
+      "label": "מפגש שני",
+      "steps": [
         {
-          "session": 1,
-          "label": "מפגש ראשון",
-          "steps": [
-            { "type": "form", "key": "consent" },
-            { "type": "form", "key": "confidentiality_request" },
-            { "type": "form", "key": "demographics" },
-            { "type": "module", "key": "introduction_module" },
-            { "type": "chat" }
-          ]
+          "type": "form",
+          "key": "consent"
         },
         {
-          "session": 2,
-          "label": "מפגש שני",
-          "steps": [
-            { "type": "form", "key": "consent" },
-            { "type": "form", "key": "confidentiality_request" },
-            { "type": "form", "key": "pre_reading_instructions" },
-            { "type": "module", "key": "reading_introduction_module" },
-            {
-              "type": "module",
-              "keySource": "reading_order",
-              "moduleOrder": 1,
-              "moduleByHalf": {
-                "withdrawal": "withdrawal_module",
-                "confrontation": "confrontation_module"
-              }
-            }
-          ]
+          "type": "form",
+          "key": "confidentiality_request"
         },
         {
-          "session": 3,
-          "label": "מפגש שלישי",
-          "steps": [
-            { "type": "form", "key": "consent" },
-            { "type": "form", "key": "confidentiality_request" },
-            { "type": "form", "key": "pre_reading_instructions" },
-            { "type": "module", "key": "reading_introduction_module" },
-            {
-              "type": "module",
-              "keySource": "reading_order",
-              "moduleOrder": 2,
-              "moduleByHalf": {
-                "withdrawal": "withdrawal_module",
-                "confrontation": "confrontation_module"
-              }
-            }
-          ]
+          "type": "form",
+          "key": "demographics"
         },
         {
-          "session": 4,
-          "label": "מפגש רביעי",
-          "steps": [
-            { "type": "form", "key": "consent" },
-            { "type": "form", "key": "confidentiality_request" },
-            { "type": "chat" }
-          ]
+          "type": "chat"
+        }
+      ]
+    },
+    {
+      "session": 3,
+      "label": "מפגש שלישי",
+      "steps": [
+        {
+          "type": "form",
+          "key": "consent"
+        },
+        {
+          "type": "form",
+          "key": "confidentiality_request"
+        },
+        {
+          "type": "form",
+          "key": "demographics"
+        },
+        {
+          "type": "chat"
+        }
+      ]
+    },
+    {
+      "session": 4,
+      "label": "מפגש רביעי",
+      "steps": [
+        {
+          "type": "form",
+          "key": "consent"
+        },
+        {
+          "type": "form",
+          "key": "confidentiality_request"
+        },
+        {
+          "type": "form",
+          "key": "demographics"
+        },
+        {
+          "type": "chat"
         }
       ]
     }
-  }
+  ]
 }

@@ -38,7 +38,7 @@ function dbRun(db, sql, params = []) {
 }
 
 async function createInvite() {
-  return createDbInvite({ groupAssignment: "experimental", readingOrder: "withdrawal_first" });
+  return createDbInvite();
 }
 
 async function getSession(token) {

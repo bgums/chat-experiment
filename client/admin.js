@@ -213,19 +213,7 @@ function renderSubjectsPanel() {
     const sessions = (participant.sessions || []).slice().sort((a, b) => a.sessionNumber - b.sessionNumber);
     sessions.forEach((session, idx) => {
       const status = computeStatus(session);
-      // Determine what to display in the Personas column. If personas exist, show them.
-      // For control-group sessions that host the reading modules (sessions 2 and 3),
-      // show which half (Withdrawal/Confrontation) that session contains when there
-      // are no personas to display.
-      let personaDisplay = "-";
-      if (session.personaNames) {
-        personaDisplay = normalizePersonaNames(session.personaNames);
-      } else if (participant.groupAssignment === "control" && (Number(session.sessionNumber) === 2 || Number(session.sessionNumber) === 3)) {
-        const reading = participant.readingOrder || "withdrawal_first";
-        const firstHalf = reading === "withdrawal_first" ? "withdrawal" : "confrontation";
-        const half = Number(session.sessionNumber) === 2 ? firstHalf : (firstHalf === "withdrawal" ? "confrontation" : "withdrawal");
-        personaDisplay = `${half.charAt(0).toUpperCase() + half.slice(1)}`;
-      }
+      const personaDisplay = session.personaNames ? normalizePersonaNames(session.personaNames) : "-";
 
       const scheduledForSession = formatDateTime(
         session.scheduledFor || computeSessionScheduledFor(participant.scheduleStart, session.sessionNumber)
@@ -236,7 +224,7 @@ function renderSubjectsPanel() {
           ${idx === 0 ? (() => {
             const dtValue = escapeHtml(toDatetimeLocal(participant.scheduleStart || ''));
             const subj = escapeHtml(participant.subjectId || 'מזהה נבדק');
-            const groupLabel = participant.groupAssignment === 'control' ? 'ביקורת' : (participant.groupAssignment === 'experimental' ? 'ניסוי' : '');
+            const groupLabel = participant.groupAssignment === 'experiment' ? 'ניסוי' : participant.groupAssignment;
             return `<td rowspan="${sessions.length}">
                 <div style="display:flex;flex-direction:column;gap:6px;">
                   <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
@@ -671,6 +659,22 @@ function renderSessionDetails(details, selectedSession = "all") {
         `).join("")}</div>`
       : "<div class='small-muted' style='padding:0 10px 10px;'>אין הודעות בצ'אט.</div>";
 
+    const practiceHtml = (details.practice || []).filter(round => round.session_number === bucket.sessionNumber).map(round => `
+      <div class="qa-item">
+        <strong>${escapeHtml(round.plan.title)}</strong> · מטופל ${escapeHtml(round.session_persona_id)} · כיוון ${escapeHtml(round.round_number)}
+        <div>אסטרטגיה מקורית: ${escapeHtml(round.plan.originalStrategyId)} — ${escapeHtml(round.plan.originalStrategyExplanation)}</div>
+        <div>אסטרטגיה לתרגול: ${escapeHtml(round.plan.strategyId)} · ${escapeHtml(round.status)}</div>
+        <div>הכוונה: ${escapeHtml(round.plan.hint)}</div>
+        ${(round.attempts || []).map(attempt => `<div class="qa-item">
+          <strong>ניסיון ${escapeHtml(attempt.attempt_number)}</strong>
+          <div>מטפל/ת: ${escapeHtml(attempt.therapist_message)}</div>
+          <div>מטופל/ת: ${escapeHtml(attempt.patient_message)}</div>
+          <div>פידבק: ${escapeHtml(attempt.feedback)}</div>
+          <div>יישום מספק: ${attempt.sufficient ? "כן" : "לא"}</div>
+          <div>${escapeHtml(attempt.summary)}</div>
+        </div>`).join("")}
+      </div>`).join("") || "<p>אין תרגול שמור.</p>";
+
     return `
       <div class="session-block">
         <div class="session-block-header">
@@ -687,6 +691,11 @@ function renderSessionDetails(details, selectedSession = "all") {
         <details class="session-collapsible">
           <summary>Chat</summary>
           ${chatHtml}
+        </details>
+        <details class="session-collapsible">
+          <summary>Deliberate Practice</summary>
+          <a href="/api/admin/participant/${encodeURIComponent(details.participant.participantCode)}/practice/export" download>הורדת תיעוד התרגול לכל המפגשים (JSON)</a>
+          ${practiceHtml}
         </details>
       </div>
     `;
@@ -795,7 +804,7 @@ createParticipantForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
   setManagementMessage("יוצר משתתף חדש...");
   try {
-    const groupAssignment = groupSelect?.value === "control" ? "control" : "experimental";
+    const groupAssignment = "experiment";
     const response = await fetch("/api/admin/invite", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -829,13 +838,12 @@ createBalancedBatchForm?.addEventListener("submit", async (event) => {
       const links = (participant.sessions || [])
         .map((s) => `S${escapeHtml(s.sessionNumber)}: <a href="/?token=${encodeURIComponent(s.token)}" target="_blank" rel="noopener">פתח</a>`)
         .join(" · ");
-      const assignmentLabel = participant.groupAssignment === "experimental" ? "E" : "C";
+      const assignmentLabel = "E";
       return `<li><strong>${idx + 1}. ${assignmentLabel}</strong> · ${escapeHtml(participant.participantCode)}<br>${links}</li>`;
     }).join("");
 
-    const perArm = Number(payload.smallestBalancedBatchPerArm) || 0;
     const total = Number(payload.totalParticipants) || 0;
-    const header = `נוצר באץ' מאוזן: ${escapeHtml(total)} משתתפים (${escapeHtml(perArm)} בכל זרוע), בסדר E/C לסירוגין.`;
+    const header = `נוצר באץ' מאוזן: ${escapeHtml(total)} משתתפים בקבוצת הניסוי.`;
     const html = `${header}<ol style="margin:8px 0 0 18px;padding:0;display:flex;flex-direction:column;gap:8px;">${rows}</ol>`;
     setManagementMessage(html, false, true);
     await refreshAllPanels();

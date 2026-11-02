@@ -48,10 +48,29 @@ export async function createResponse(payload) {
         throw buildSimulatedRateLimitError();
       }
       await delay(SIMULATED_RESPONSE_DELAY_MS);
+      let simulatedText = SIMULATED_RESPONSE_TEXT;
+      const formatName = payload.text?.format?.name;
+      if (formatName === "practice_selection") {
+        const data = JSON.parse(payload.input);
+        const source = data.transcript.find(message => message.role === "assistant");
+        simulatedText = JSON.stringify({
+          sourceMessageId: source.id,
+          originalStrategyId: "problem_solving", originalStrategyExplanation: "ניסיון להציע פתרון.",
+          strategyId: data.excludedStrategyIds.length ? "explore_rupture" : "validate_emotion",
+          title: "תרגול איחוי", explanation: "התייחסות לרגע של קושי בקשר.",
+          principles: "הקשבה וסקרנות.", application: "התייחסות לחוויה של המטופל.", hint: "נסו לברר כיצד נחוותה התגובה שלכם."
+        });
+      } else if (formatName === "practice_evaluation") {
+        const data = JSON.parse(payload.input);
+        simulatedText = JSON.stringify({
+          sufficient: !data.dialogue.at(-1).content.includes("retry"),
+          feedback: "משוב מדומה על התגובה.", summary: "סיכום מדומה של הכיוון שנוסה."
+        });
+      }
       return {
         output: [
           {
-            content: [{ text: SIMULATED_RESPONSE_TEXT }]
+            content: [{ text: simulatedText }]
           }
         ]
       };

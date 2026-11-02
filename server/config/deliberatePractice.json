@@ -1,0 +1,6 @@
+{
+  "version": "1",
+  "strategiesPerChat": 2,
+  "maxAttemptsPerStrategy": 3,
+  "maxMessageLength": 6000
+}

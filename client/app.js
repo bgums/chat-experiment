@@ -1,3 +1,4 @@
+import { renderPractice } from "./practice.js";
 const urlParams = new URLSearchParams(window.location.search);
 const token = urlParams.get("token");
 const mode = String(urlParams.get("mode") || "").toLowerCase();
@@ -187,7 +188,7 @@ const updateStepNavigationVisibility = (step) => {
   const isChatStep = step?.type === "chat";
   const isModuleStep = step?.type === "module";
   const shouldHideForChat = isChatStep && !isChatFinished(step);
-  if (shouldHideForChat || isModuleStep) {
+  if (shouldHideForChat || isModuleStep || step?.type === "practice") {
     stepBackBtn.style.display = "none";
     stepForwardBtn.style.display = "none";
     return;
@@ -1170,6 +1171,7 @@ async function renderCurrentStep() {
   if (activeFormController?.teardown) {
     activeFormController.teardown();
   }
+  activeFormController = null;
 
   if (!step) {
     if (stepForwardBtn) {
@@ -1180,6 +1182,16 @@ async function renderCurrentStep() {
   }
 
   updateStepNavigationVisibility(step);
+
+  if (step.type === "practice") {
+    await renderPractice({
+      step: { ...step, token: state.token }, container: stepContainer,
+      fetchApi: sessionApiFetch, readOnly: state.isReadOnly,
+      isCurrent: () => feedbackRenderCounter === renderId,
+      next: () => { state.currentStepIndex += 1; renderCurrentStep(); }
+    });
+    return;
+  }
 
   if (step.type === "form") {
     try {
