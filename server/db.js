@@ -9,7 +9,7 @@ import { getPracticeStatus } from "./utils/practiceProgress.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const DB_PATH = process.env.SQLITE_PATH || path.join(__dirname, "data", "experiment.db");
+const DB_PATH = process.env.SQLITE_PATH || path.join(__dirname, "data", "clinic-rehearsal.db");
 
 let dbInstance = null;
 

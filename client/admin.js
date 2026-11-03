@@ -668,7 +668,6 @@ function renderSessionDetails(details, selectedSession = "all") {
         ${(round.attempts || []).map(attempt => `<div class="qa-item">
           <strong>ניסיון ${escapeHtml(attempt.attempt_number)}</strong>
           <div>מטפל/ת: ${escapeHtml(attempt.therapist_message)}</div>
-          <div>מטופל/ת: ${escapeHtml(attempt.patient_message)}</div>
           <div>פידבק: ${escapeHtml(attempt.feedback)}</div>
           <div>ציון: ${escapeHtml(attempt.score ?? "טרם הוגדר")}</div>
           <div>${escapeHtml(attempt.summary)}</div>

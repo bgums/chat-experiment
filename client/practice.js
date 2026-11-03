@@ -1,4 +1,4 @@
-// Dedicated practice renderer. Patient dialogue and coaching are separate DOM elements.
+// Dedicated practice renderer. Original dialogue and coaching are separate DOM elements.
 export async function renderPractice({ step, container, fetchApi, readOnly, next, isCurrent, parseMarkdown }) {
   const endpoint = `/api/session/${step.token}/persona/${step.sessionPersonaId}/practice`;
   let data;
@@ -62,7 +62,7 @@ export async function renderPractice({ step, container, fetchApi, readOnly, next
   }
   function header() {
     heading("תרגול");
-    card.append(element("p", "כעת נבחן חלק מן השיחה עם המטופל, ונתאמן עליו. אנא קראו את קטע השיחה והמשיכו לפידבק ולהוראות התרגול."));
+    card.append(element("p", "כעת נתרגל ניסוח של תגובת המטפל/ת על בסיס קטע מהשיחה. אחרי כל ניסיון תקבלו פידבק ותוכלו לנסות שוב."));
   }
   function loading() {
     if (!isCurrent()) return;
@@ -103,7 +103,7 @@ export async function renderPractice({ step, container, fetchApi, readOnly, next
     const entries = round.plan.excerpt.map(message => ({ ...message }));
     entries.push({ coaching: round.plan.feedback, title: "פידבק" }, { coaching: round.plan.hint, title: "טיפ" });
     for (const attempt of round.attempts) {
-      entries.push({ role: "user", content: attempt.therapist_message }, { role: "assistant", content: attempt.patient_message }, { coaching: attempt.feedback, attempt }, { coaching: attempt.hint || "הפרומפט טרם הוגדר.", title: "טיפ" });
+      entries.push({ role: "user", content: attempt.therapist_message }, { coaching: attempt.feedback, attempt }, { coaching: attempt.hint || "הפרומפט טרם הוגדר.", title: "טיפ" });
     }
     // Keep exactly the latest three dialogue messages expanded. Coaching is not a message.
     let dialogueCount = 0;
@@ -146,7 +146,7 @@ export async function renderPractice({ step, container, fetchApi, readOnly, next
     }
     if (readOnly) { card.append(element("p", "מצב צפייה בלבד — התרגול טרם הושלם.")); return; }
     const form = element("form", "", "practice-form");
-    const label = element("label", round.attempts.length ? "התגובה שלך למטופל/ת" : "נסחו תגובה חלופית במקום תגובת המטפל/ת המקורית");
+    const label = element("label", round.attempts.length ? "הניסיון הבא שלך" : "נסחו תגובה חלופית במקום תגובת המטפל/ת המקורית");
     const input = element("textarea");
     input.id = `practice-message-${round.id}`;
     label.htmlFor = input.id;
@@ -165,7 +165,7 @@ export async function renderPractice({ step, container, fetchApi, readOnly, next
       busy = true;
       submit.disabled = true;
       input.disabled = true;
-      pending.textContent = "המטופל משיב והמשוב בהכנה…";
+      pending.textContent = "המשוב בהכנה…";
       errorBox.textContent = "";
       try {
         data = await request("attempt", { roundId: round.id, attemptNumber: round.attempts.length + 1, message: input.value });

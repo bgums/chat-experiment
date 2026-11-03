@@ -1,3 +1,4 @@
 node_modules/
 .env
 server/data/experiment.db
+server/data/clinic-rehearsal.db

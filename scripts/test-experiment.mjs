@@ -100,9 +100,9 @@ try {
   assert.deepEqual(options.groups.map(g => g.key), ["experiment"]);
   const first = await api(`/api/session/${invite.sessions[0].token}`);
   assert.equal(first.steps.filter(s => s.type === "chat").length, 2);
-  assert.equal(first.steps.filter(s => s.type === "practice").length, 1);
+  assert.equal(first.steps.filter(s => s.type === "practice").length, 2);
   assert.ok(!first.steps.some(s => s.type === "feedback" || s.key === "pre_feedback"));
-  assert.equal(first.steps.find(s => s.type === "practice").sessionPersonaId, first.steps.filter(s => s.type === "chat")[1].sessionPersonaId);
+  assert.deepEqual(first.steps.filter(s => s.type === "practice").map(s => s.sessionPersonaId), first.steps.filter(s => s.type === "chat").map(s => s.sessionPersonaId));
   assert.equal(first.steps.filter(s => s.type === "module").length, 1);
   const token = invite.sessions[1].token;
   const session = await api(`/api/session/${token}`);
@@ -123,7 +123,7 @@ try {
   await api(`/api/session/${token}/complete`, {}, 400);
   await api(practiceUrl(personas[0]) + "/start", {}, 400);
   const firstChat = first.steps.find(s => s.type === "chat");
-  await api(`/api/session/${invite.sessions[0].token}/persona/${firstChat.sessionPersonaId}/practice/start`, {}, 403);
+  await api(`/api/session/${invite.sessions[0].token}/persona/${firstChat.sessionPersonaId}/practice/start`, {}, 400);
   for (const persona of personas) {
     await api(`/api/session/${token}/forms/post_chat`, { sessionPersonaId: persona.sessionPersonaId, responses: {} });
     for (const [role, content] of [["assistant", "שלום"], ["user", "מה קרה בינינו?"], ["assistant", "אני מרגיש שאתה לא מבין אותי"], ["user", persona === personas[0] ? "תגובה מקורית" : "excellent original"]]) {
@@ -150,6 +150,7 @@ try {
       data = await api(url + "/attempt", { roundId: initial.id, attemptNumber: n, message: capped ? "retry" : "אני מבין את הקושי" });
       assert.equal(data.rounds[0].attempts.length, n);
       assert.equal(data.rounds[0].attempts.at(-1).score, capped ? 1 : 3);
+      assert.ok(!("patient_message" in data.rounds[0].attempts.at(-1)));
       assert.ok(!("sufficient" in data.rounds[0].attempts.at(-1)));
       assert.equal(data.rounds[0].status, n < 3 ? "active" : "attempt_limit");
       if (n < 3) await api(`/api/session/${token}/complete`, {}, 400);

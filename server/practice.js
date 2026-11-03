@@ -2,10 +2,9 @@ import fs from "fs";
 import { createHash } from "crypto";
 import { createResponse } from "./openaiClient.js";
 import { extractTextFromResponse } from "./utils/extractText.js";
-import { buildPersonaPrompt } from "./utils/personaLoader.js";
 import { listPracticeRounds, practiceRun } from "./db.js";
 import { practiceStrategyMode, practiceFeedbackContext } from "./utils/practiceProgress.js";
-import { createPracticeResponse, practiceKnowledge, knowledgeHash, knowledgeInstructions } from "./utils/practiceKnowledge.js";
+import { createPracticeResponse, practiceKnowledge, knowledgeHash } from "./utils/practiceKnowledge.js";
 import { nowGmtPlus3Iso } from "./utils/timezone.js";
 
 const read = name => fs.readFileSync(new URL(name, import.meta.url), "utf8");
@@ -171,32 +170,25 @@ export async function attemptPractice(session, persona, body) {
   if (typeof message !== "string" || !message.trim() || message.length > round.config.maxMessageLength) throw Object.assign(new Error("Invalid practice message."), { status: 400 });
   // Rehearse a replacement for the original therapist response.
   const dialogue = round.plan.replacedTherapistMessageId ? round.plan.excerpt.slice(0, -1) : [...round.plan.excerpt];
-  for (const attempt of round.attempts) dialogue.push({ role: "user", content: attempt.therapist_message }, { role: "assistant", content: attempt.patient_message });
+  for (const attempt of round.attempts) dialogue.push({ role: "user", content: attempt.therapist_message });
   dialogue.push({ role: "user", content: message });
-  const patientRequest = createResponse({
-    model: round.config.model,
-    instructions: `${knowledgeInstructions("patient")}\n\n${buildPersonaPrompt(JSON.parse(persona.personaJson))}\nהמשך לגלם את המטופל בעברית בהמשך השיחה הנתונה. אל תיתן פידבק ואל תמלא את תפקיד המטפל.`,
-    input: dialogue.map(({ role, content }) => ({ role, content })), max_output_tokens: 500
-  });
   const scoreRequest = structured(scoring, { plan: cleanPlan(round.plan), dialogue, therapistMessage: message, assessmentType: "attempt" }, scoreSchema, "practice_score", round.config.model);
-  const [response, scoreResult] = await Promise.all([patientRequest, scoreRequest]);
-  const patient = extractTextFromResponse(response);
-  if (!patient.trim()) throw new Error("Empty patient response.");
+  const scoreResult = await scoreRequest;
   const context = {
-    plan: cleanPlan(round.plan), dialogue, patientReply: patient,
+    plan: cleanPlan(round.plan), dialogue, therapistMessage: message,
     ...practiceFeedbackContext(scoreResult.score, body.attemptNumber, { ...round.config, strategiesPerChat: practiceConfig.strategiesPerChat }, round.round_number)
   };
   const result = await structured(coachingPrompt(evaluation), context, evaluationSchema, "practice_evaluation", round.config.model);
   // One SQL statement commits the complete attempt; status is derived from it below.
   await practiceRun(`INSERT INTO practice_attempts
     (round_id, attempt_number, therapist_message, patient_message, feedback, summary, score, hint, evaluation_prompt_hash, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [round.id, body.attemptNumber, message, patient, result.feedback, result.summary, scoreResult.score, result.hint, promptHash, nowGmtPlus3Iso()]);
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [round.id, body.attemptNumber, message, "", result.feedback, result.summary, scoreResult.score, result.hint, promptHash, nowGmtPlus3Iso()]);
   return listPracticeRounds(session.participantId, persona.id);
 }
 
 export async function practiceComplete(session, personas) {
   const rounds = await listPracticeRounds(session.participantId);
-  const eligible = Number(session.sessionNumber) === 1 ? personas.slice(-1) : personas;
+  const eligible = personas;
   return eligible.length > 0 && eligible.every(persona => {
     const own = rounds.filter(r => r.session_persona_id === persona.id);
     return own.length >= practiceConfig.strategiesPerChat && own.slice(0, practiceConfig.strategiesPerChat).every(r => r.status !== "active");

@@ -8,8 +8,9 @@ export function participantPracticePayload(config, rounds, messages) {
       plan: config.showScoresToParticipant ? round.plan : Object.fromEntries(Object.entries(round.plan || {}).filter(([key]) => key !== "originalScore")),
       config: { ...round.config, strategiesPerChat: config.strategiesPerChat, showScoresToParticipant: config.showScoresToParticipant },
       attempts: round.attempts.map(attempt => {
-        if (config.showScoresToParticipant) return attempt;
-        const { score, ...visible } = attempt;
+        const { patient_message, ...participantAttempt } = attempt;
+        if (config.showScoresToParticipant) return participantAttempt;
+        const { score, ...visible } = participantAttempt;
         return visible;
       })
     }))

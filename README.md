@@ -9,7 +9,7 @@ Requires Node.js 18+ and `npm install`. Set these environment variables in `.env
 `OPENAI_API_KEY`, `OPENAI_MODEL` (default `gpt-4.1`), `ADMIN_USER`, `ADMIN_PASSWORD`, and optionally `PORT` (default 3000).
 
 Run `npm start`, open `http://localhost:3000/admin`, and create participant links.
-`SQLITE_PATH` optionally selects the database; default: `server/data/experiment.db`.
+`SQLITE_PATH` optionally selects the database; default: `server/data/clinic-rehearsal.db`.
 Use a separate database for pilots. Schema migrations run on startup; back up an
 existing research database before upgrading it.
 
@@ -19,8 +19,7 @@ existing research database before upgrading it.
 confidentiality request. Demographics appears only in session 1, alongside the existing alliance
 introduction module. Each patient interaction includes pre-chat instructions,
 an eight-minute chat, the existing post-chat questionnaire,
-and deliberate practice with inline feedback and hint messages. In session 1, practice occurs only after the
-second conversation. Sessions 2–4 include them after both conversations.
+and deliberate practice with inline feedback and hint messages after both conversations in every session.
 Each meeting ends with completion; session 4 shows the final study thank-you.
 
 Control allocation, reading-order logic, associated modules and obsolete checks
@@ -56,8 +55,7 @@ repetition across sessions.
 The participant sees three original messages in the order
 therapist → patient → therapist, followed by feedback and hint in matching coaching cards. They write a replacement for
 the last therapist response. The original response is excluded from the rehearsal
-model's dialogue context. Every therapist message receives a patient reply and short
-assessment. Each strategy ends at score 5 or after three attempts. Two strategies are practised:
+model's dialogue context. Each therapist message receives a short assessment, without a generated patient reply. Each strategy ends at score 5 or after three attempts. Two strategies are practised:
 when the original score is below 5, first improve the original strategy and then try
 an alternative; at 5, try two different alternatives. Both use the same original excerpt.
 After the final feedback and tip, Continue advances to the next session step.
@@ -75,7 +73,7 @@ participant API responses while remaining available to admin/export. The study r
 defines 1/3/5 quality scores. This is an explicitly adapted DP measure, not the manual's
 salience scale or repair-effectiveness scale. Five is the practice progression threshold.
 
-Patient replies and scoring run in parallel; feedback and tip are then generated together. Practice does not modify
+Scoring runs before feedback and tip are generated together. Practice does not modify
 the original conversation. An attempt is saved only after all required calls succeed;
 network retries return an already saved matching attempt. Concurrent requests for
 one patient are guarded in memory: deployment assumes one Node.js server process.
@@ -90,7 +88,7 @@ A temporary “התחלה מחדש של האימון” button in practice delet
 - `practice_rounds`: participant/session/patient references, round number, original
   and selected strategy, source message ID and exact excerpt, explanation, hint,
   configuration snapshot, model and selection prompt hash.
-- `practice_attempts`: ordered therapist message, patient reply, feedback, numeric score,
+- `practice_attempts`: ordered therapist message, feedback, numeric score,
   summary, evaluation prompt hash and timestamp.
 
 Round status (`active`, `attempt_limit`, or future `early_stopped`) is derived from attempts,
@@ -132,7 +130,7 @@ are no longer required. Existing environment values can remain unused.
 
 Initial DP uses three sequential model calls for recognized strategies: selection,
 original score, then feedback + tip. The next strategy needs two calls. Each attempt
-uses three calls in two stages: patient reply + score concurrently, then feedback + tip.
+uses two sequential calls: scoring, then feedback + tip.
 Prompt and knowledge hashes identify the version. Restart the server and restart
 practice to apply changes to saved plans. Actual latency and coaching quality still
 need a real-model pilot; simulation verifies orchestration, not clinical validity.

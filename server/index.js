@@ -137,28 +137,8 @@ function shouldIncludeFeedbackForSession(session) {
   return session.groupAssignment === "experiment";
 }
 
-function isSessionOneExperimental(session) {
-  if (!session) return false;
-  return session.groupAssignment === "experiment" && Number(session.sessionNumber) === 1;
-}
-
-function getLastPersonaId(personas) {
-  if (!Array.isArray(personas) || !personas.length) return null;
-  const sorted = [...personas].sort((a, b) => {
-    const orderDiff = Number(a?.personaOrder || 0) - Number(b?.personaOrder || 0);
-    if (orderDiff !== 0) return orderDiff;
-    return Number(a?.id || 0) - Number(b?.id || 0);
-  });
-  return Number(sorted[sorted.length - 1]?.id || 0) || null;
-}
-
 async function isFeedbackAllowedForPersona(session, sessionPersonaId) {
-  if (!shouldIncludeFeedbackForSession(session)) return false;
-  if (!isSessionOneExperimental(session)) return true;
-
-  const personas = await getSessionPersonas(session.sessionId);
-  const lastPersonaId = getLastPersonaId(personas);
-  return Number(sessionPersonaId) === Number(lastPersonaId);
+  return Boolean(sessionPersonaId) && shouldIncludeFeedbackForSession(session);
 }
 
 async function hasPostChatFormForPersona(session, sessionPersonaId) {
@@ -1020,8 +1000,6 @@ app.get("/api/session/:token", async (req, res) => {
     }
 
     const includeFeedbackSteps = shouldIncludeFeedbackForSession(session);
-    const restrictFeedbackToLastPersona = isSessionOneExperimental(session);
-    const lastPersonaId = restrictFeedbackToLastPersona ? getLastPersonaId(persistedPersonas) : null;
     const personaSteps = (persistedPersonas || []).flatMap((personaRow) => {
       const personaData = withPersonaDisplay(personaRow.personaJson);
       const personaMeta = {
@@ -1046,10 +1024,7 @@ app.get("/api/session/:token", async (req, res) => {
         { type: "chat", kind: "persona", order: personaRow.personaOrder, ...personaMeta },
         { type: "form", key: "post_chat", kind: "post_chat", order: personaRow.personaOrder + 0.25, ...personaMeta }
       ];
-      const includeFeedbackForPersona = includeFeedbackSteps
-        && (!restrictFeedbackToLastPersona || Number(personaRow.id) === Number(lastPersonaId));
-
-      if (includeFeedbackForPersona) {
+      if (includeFeedbackSteps) {
         steps.push({ type: "practice", kind: "deliberate_practice", order: personaRow.personaOrder + 0.75, ...personaMeta });
       }
       return steps;

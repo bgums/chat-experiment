@@ -4,7 +4,7 @@ import os
 import shutil
 import sys
 
-DB = os.path.join(os.path.dirname(__file__), "experiment.db")
+DB = os.path.join(os.path.dirname(__file__), "clinic-rehearsal.db")
 if not os.path.exists(DB):
     print(f"DB not found at {DB}")
     raise SystemExit(1)
@@ -145,7 +145,7 @@ def execute_delete_tokens(db_path, tokens):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument('--db', default=DB, help='Path to experiment.db')
+    p.add_argument('--db', default=DB, help='Path to clinic-rehearsal.db')
     p.add_argument('--list', action='store_true', help='List all session tokens')
     p.add_argument('--delete-upcoming', action='store_true', help='Print commented SQL for upcoming tokens (safe preview)')
     p.add_argument('--delete-token', help='Print commented SQL for a specific token')
