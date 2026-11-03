@@ -23,7 +23,7 @@ let currentChatStep = null;
 let chatLocked = false;
 let midPrimeTimeout = null;
 let activeFormController = null;
-let feedbackRenderCounter = 0;
+let stepRenderCounter = 0;
 let mobileOverrideAuthorized = false;
 
 let moduleState = null;
@@ -1061,102 +1061,10 @@ async function renderChat(step) {
   setStepIndicator();
 }
 
-async function renderFeedback(step, renderId) {
-  stopChatTimer();
-  if (midPrimeTimeout) {
-    clearTimeout(midPrimeTimeout);
-    midPrimeTimeout = null;
-  }
-  setChatLockState(false);
-  currentChatStep = step;
-
-  const persona = step?.persona || {};
-  stepContainer.innerHTML = "";
-
-  const card = document.createElement("div");
-  card.className = "step-card feedback-card";
-
-  const title = document.createElement("h3");
-  title.textContent = `פידבק למפגש עם ${persona.name || "מטופל"}`;
-  card.appendChild(title);
-
-  const subtitle = document.createElement("p");
-  subtitle.className = "muted";
-  subtitle.textContent = "המסך הזה מציג את הפידבק אודות השיחה. אין אפשרות לשלוח הודעות.";
-  card.appendChild(subtitle);
-
-  const feedbackBody = document.createElement("div");
-  feedbackBody.className = "feedback-body";
-  feedbackBody.textContent = "טוען פידבק...";
-  card.appendChild(feedbackBody);
-
-  stepContainer.appendChild(card);
-
-  if (state.isReadOnly) {
-    try {
-      const history = await fetchPersonaMessages(step.sessionPersonaId);
-      const feedbackMessage = (history?.messages || [])
-        .slice()
-        .reverse()
-        .find((message) => message.role === "assistant_feedback");
-      if (feedbackMessage?.content) {
-        feedbackBody.innerHTML = safeParseMarkdown(feedbackMessage.content, { mangle: false, headerIds: false, breaks: true });
-      } else {
-        feedbackBody.textContent = "אין פידבק שמור עבור שיחה זו.";
-      }
-    } catch (_error) {
-      feedbackBody.textContent = "לא ניתן לטעון פידבק שמור כרגע.";
-    }
-    return;
-  }
-
-  let retryDelayMs = 1500;
-  const maxWaitMs = 3 * 60 * 1000;
-  const waitStartedAt = Date.now();
-  const timeoutMessage = "ישנה בעיה עם טעינת הפידבק - אנא פנו למאיה סלומון במייל Salomonm@post.bgu.ac.il";
-
-  for (;;) {
-    if (renderId !== feedbackRenderCounter) {
-      return;
-    }
-
-    if (Date.now() - waitStartedAt >= maxWaitMs) {
-      feedbackBody.textContent = timeoutMessage;
-      return;
-    }
-
-    try {
-      const response = await sessionApiFetch(`/api/session/${state.token}/persona/${step.sessionPersonaId}/feedback`, { method: "POST" });
-      const data = await response.json().catch(() => ({}));
-
-      if (!response.ok) {
-        throw new Error(data?.error || "Feedback request failed");
-      }
-
-      if (data?.pending || data?.ready === false) {
-        const nextPollMs = Math.max(500, Number(data?.pollAfterMs) || 2000);
-        feedbackBody.textContent = "טוען פידבק...";
-        await wait(nextPollMs);
-        continue;
-      }
-
-      if (data.eligible === false) {
-        feedbackBody.textContent = data.response || "לא ניתן לספק פידבק כי הדרישות לא מולאו.";
-      } else {
-        feedbackBody.innerHTML = window.marked.parse(data.response || "");
-      }
-      return;
-    } catch (error) {
-      feedbackBody.textContent = "טוען פידבק...";
-      await wait(retryDelayMs);
-      retryDelayMs = Math.min(15000, Math.floor(retryDelayMs * 1.5));
-    }
-  }
-}
 
 async function renderCurrentStep() {
-  feedbackRenderCounter += 1;
-  const renderId = feedbackRenderCounter;
+  stepRenderCounter += 1;
+  const renderId = stepRenderCounter;
   setStepIndicator();
   stopChatTimer();
   if (midPrimeTimeout) {
@@ -1187,7 +1095,8 @@ async function renderCurrentStep() {
     await renderPractice({
       step: { ...step, token: state.token }, container: stepContainer,
       fetchApi: sessionApiFetch, readOnly: state.isReadOnly,
-      isCurrent: () => feedbackRenderCounter === renderId,
+      parseMarkdown: text => safeParseMarkdown(text, { breaks: true }),
+      isCurrent: () => stepRenderCounter === renderId,
       next: () => { state.currentStepIndex += 1; renderCurrentStep(); }
     });
     return;
@@ -1230,10 +1139,6 @@ async function renderCurrentStep() {
     return;
   }
 
-  if (step.type === "feedback") {
-    await renderFeedback(step, renderId);
-    return;
-  }
 
   renderPlaceholder("סוג שלב לא מוכר בקובץ התצורה.");
 }

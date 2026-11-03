@@ -1,0 +1,31 @@
+פורמט הרמז
+כעת נתרגל יישום של [שם האסטרטגיה]. 
+[כתוב במשפט-שניים הכוונה למה שצריך לעשות כדי לשפר את היישום של האסטרטגיה שנבחרה.
+בשביל זה, היעזר בהגדרת האסטרטגיות מתוך מדריך 3RS.
+הרמז צריך להיות תמציתי ולא להכביד. זהה מה הכיוון המרכזי שיהפוך את היישום של האסטרטגיה ליעיל, ותתמקד בו. הישאר נאמן להגדרת 3RS]
+
+בנק האסטרטגיות:
+3. Repair strategies
+אסטרטגיות איחוי קרעים בברית הטיפולית
+Discussing changing the task/goal
+דיון באפשרות לשינוי המשימה או המטרה
+Changing the task/goal
+שינוי המשימה או המטרה
+Illustrating task/rationale
+המחשת המשימה או הסבר הרציונל שלה
+Redirecting back to task/work of therapy
+החזרת המיקוד למשימה או לעבודה הטיפולית
+Validating the other’s experience of the rupture
+תיקוף חוויית הקרע
+Inviting an exploration of the rupture
+הזמנה לחקור את הקרע
+Engaging in an exploration of the rupture
+השתתפות פעילה בחקר הקרע
+Exploring avoidance of rupture and redirecting back to the rupture
+חקר ההימנעות מהקרע והחזרת המיקוד אליו
+Disclosing one’s internal experience of the rupture
+שיתוף בחוויה הפנימית של הקרע
+Acknowledging one's contribution to the rupture
+הכרה בתרומה האישית לקרע
+Linking the rupture to a larger interpersonal pattern
+קישור הקרע לדפוס בין־אישי רחב יותר

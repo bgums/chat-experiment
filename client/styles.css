@@ -668,18 +668,6 @@ body {
   line-height: 1.4;
 }
 
-.feedback-card {
-  min-height: 200px;
-}
-
-.feedback-body {
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 12px;
-  background: rgba(61, 90, 241, 0.04);
-  min-height: 120px;
-}
-
 .chat-window::-webkit-scrollbar {
   width: 8px;
 }
@@ -1051,6 +1039,14 @@ body {
 .practice-dialogue { display: flex; flex-direction: column; gap: 16px; max-height: 55vh; overflow-y: auto; padding: 16px; }
 .practice-coach { background: #eef5fa; border-inline-start: 4px solid #527b93; color: #23485d; padding: 14px 18px; border-radius: 10px; margin: 8px 0; }
 .practice-coach p { margin: 6px 0 0; white-space: pre-wrap; }
+.practice-markdown strong,
+.practice-markdown b,
+.practice-markdown em,
+.practice-markdown i {
+  font-weight: 700;
+  font-style: normal;
+  color: inherit;
+}
 .practice-dialogue .message p { white-space: pre-wrap; }
 .practice-form { display: grid; gap: 12px; margin-top: 20px; }
 .practice-form textarea { width: 100%; box-sizing: border-box; padding: 14px; font: inherit; border-radius: 8px; border: 1px solid #94a7b2; resize: vertical; }

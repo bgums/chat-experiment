@@ -84,6 +84,7 @@ try {
   const first = await api(`/api/session/${invite.sessions[0].token}`);
   assert.equal(first.steps.filter(s => s.type === "chat").length, 2);
   assert.equal(first.steps.filter(s => s.type === "practice").length, 1);
+  assert.ok(!first.steps.some(s => s.type === "feedback" || s.key === "pre_feedback"));
   assert.equal(first.steps.find(s => s.type === "practice").sessionPersonaId, first.steps.filter(s => s.type === "chat")[1].sessionPersonaId);
   assert.equal(first.steps.filter(s => s.type === "module").length, 1);
   const token = invite.sessions[1].token;
@@ -107,13 +108,15 @@ try {
   await api(`/api/session/${invite.sessions[0].token}/persona/${firstChat.sessionPersonaId}/practice/start`, {}, 403);
   for (const persona of personas) {
     await api(`/api/session/${token}/forms/post_chat`, { sessionPersonaId: persona.sessionPersonaId, responses: {} });
-    for (const [role, content] of [["assistant", "שלום"], ["user", "מה קרה בינינו?"], ["assistant", "אני מרגיש שאתה לא מבין אותי"], ["user", "תגובה מקורית"], ["assistant_feedback", "פידבק שמור"]]) {
+    for (const [role, content] of [["assistant", "שלום"], ["user", "מה קרה בינינו?"], ["assistant", "אני מרגיש שאתה לא מבין אותי"], ["user", "תגובה מקורית"]]) {
       await run("INSERT INTO messages(participant_id, session_number, session_persona_id, role, content) VALUES (?, 2, ?, ?, ?)", [participant.id, persona.sessionPersonaId, role, content]);
     }
     const url = practiceUrl(persona);
     let data = await api(url + "/start", {});
     const initial = data.rounds[0];
     assert.deepEqual(initial.plan.excerpt.map(message => message.role), ["user", "assistant", "user"]);
+    assert.equal(initial.plan.feedback, "הפרומפט טרם הוגדר.");
+    assert.equal(initial.plan.hint, "הפרומפט טרם הוגדר.");
     assert.equal(initial.plan.excerpt[1].content, "אני מרגיש שאתה לא מבין אותי");
     assert.equal(initial.plan.excerpt.at(-1).content, "תגובה מקורית");
     assert.equal(data.originalMessages[0].content, "שלום");
@@ -138,7 +141,7 @@ try {
     assert.equal((await api(url)).rounds[0].attempts.length, 3);
   }
   // Original dialogue was never polluted by rehearsal.
-  assert.equal((await all("SELECT * FROM messages WHERE participant_id = ? AND session_number = 2", [participant.id])).length, 10);
+  assert.equal((await all("SELECT * FROM messages WHERE participant_id = ? AND session_number = 2", [participant.id])).length, 8);
   const details = await api(`/api/admin/participant/${invite.participantCode}/details`);
   assert.equal(details.practice.length, 2);
   assert.equal(details.practice[0].group, "experiment");
@@ -150,6 +153,17 @@ try {
   assert.ok(!(await all("PRAGMA table_info(practice_attempts)")).some(column => column.name === "sufficient"));
   const outsider = await api("/api/admin/invite", {});
   await api(`/api/session/${outsider.sessions[1].token}/persona/${personas[0].sessionPersonaId}/practice`, undefined, 404);
+  const restartUrl = practiceUrl(personas[0]);
+  const oldRound = (await api(restartUrl)).rounds[0];
+  await api(restartUrl + "/restart", {}, 403, { "X-Session-View-Only": "1" });
+  const restarted = (await api(restartUrl + "/restart", {})).rounds[0];
+  assert.notEqual(restarted.id, oldRound.id);
+  assert.equal(restarted.attempts.length, 0);
+  assert.equal(restarted.round_number, 1);
+  assert.equal((await all("SELECT * FROM practice_attempts WHERE round_id = ?", [oldRound.id])).length, 0);
+  assert.equal((await api(practiceUrl(personas[1]))).rounds[0].attempts.length, 3);
+  await api(restartUrl + "/attempt", { roundId: oldRound.id, attemptNumber: 1, message: "stale" }, 409);
+  for (let n = 1; n <= 3; n++) await api(restartUrl + "/attempt", { roundId: restarted.id, attemptNumber: n, message: "תגובה חלופית" });
   await api(`/api/session/${token}/complete`, {});
   const csv = await fetch(base + "/api/admin/forms/export", { headers: { Authorization: auth } });
   assert.match(await csv.text(), /"group"/);

@@ -28,7 +28,6 @@ import {
   saveSessionPersonaConversationId,
   markSessionPersonaFirstMessage,
   markSessionPersonaMidPromptSent,
-  markSessionPersonaFeedbackSent,
   getSessionPersona,
   listMessagesBySessionPersona,
   listSessionsByParticipant,
@@ -44,7 +43,7 @@ import {
 import { ensureSessionPersonas, buildPersonaPrompt, getAllPersonas } from "./utils/personaLoader.js";
 import { nowGmtPlus3Iso } from "./utils/timezone.js";
 import { listPracticeRounds } from "./db.js";
-import { practiceConfig, startPractice, attemptPractice, withPracticeLock, practiceComplete } from "./practice.js";
+import { practiceConfig, restartPractice, startPractice, attemptPractice, withPracticeLock, practiceComplete } from "./practice.js";
 import { participantPracticePayload } from "./utils/practicePresentation.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -65,11 +64,9 @@ if (!FILE_ID) {
 
 const chatInstructionsPath = path.join(__dirname, "instructions", "chat_instructions.txt");
 const midChatInstructionsPath = path.join(__dirname, "instructions", "mid_chat_instructions.txt");
-const feedbackInstructionsPath = path.join(__dirname, "instructions", "feedback_instructions.txt");
 
 const chatInstructions = fs.readFileSync(chatInstructionsPath, "utf-8");
 const midChatInstructions = fs.readFileSync(midChatInstructionsPath, "utf-8");
-const feedbackInstructions = fs.readFileSync(feedbackInstructionsPath, "utf-8");
 
 const CHAT_DURATION_MINUTES = 8;
 const CHAT_DURATION_MS = CHAT_DURATION_MINUTES * 60 * 1000;
@@ -78,20 +75,6 @@ const SESSION_SCHEDULE_LOCK_WINDOW_MS = 24 * 60 * 60 * 1000;
 const MID_PROMPT_MINUTES = 9;
 const MID_PROMPT_MS = MID_PROMPT_MINUTES * 60 * 1000;
 const CHAT_MAX_OUTPUT_TOKENS = Math.max(1, Number(process.env.OPENAI_CHAT_MAX_OUTPUT_TOKENS || 500));
-const FEEDBACK_MAX_OUTPUT_TOKENS = Math.max(1, Number(process.env.OPENAI_FEEDBACK_MAX_OUTPUT_TOKENS || 1500));
-const FEEDBACK_MIN_PARTICIPANT_MESSAGES = 2;
-const FEEDBACK_FALLBACK_TEXT = "feedback could not be provided as the chat did not meet the requirements";
-const FEEDBACK_SYSTEM_BUSY_TEXT = "Feedback is delayed due to temporary system load. Please wait a moment and it will appear automatically.";
-const FEEDBACK_POLL_AFTER_MS = Math.max(500, Number(process.env.FEEDBACK_POLL_AFTER_MS || 2000));
-const FEEDBACK_MAX_CONCURRENCY = Math.max(1, Number(process.env.FEEDBACK_MAX_CONCURRENCY || 3));
-const FEEDBACK_MAX_RETRIES = Math.max(0, Number(process.env.FEEDBACK_MAX_RETRIES || 6));
-const FEEDBACK_RETRY_BASE_MS = Math.max(250, Number(process.env.FEEDBACK_RETRY_BASE_MS || 1000));
-const FEEDBACK_RETRY_MAX_MS = Math.max(FEEDBACK_RETRY_BASE_MS, Number(process.env.FEEDBACK_RETRY_MAX_MS || 15000));
-
-const feedbackJobsByPersona = new Map();
-const feedbackJobQueue = [];
-let activeFeedbackWorkers = 0;
-
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -162,13 +145,6 @@ function shouldIncludeFeedbackForSession(session) {
   return session.groupAssignment === "experiment";
 }
 
-function shouldIncludePreFeedbackInstructionForSession(session) {
-  if (!session) return false;
-  const isExperimental = session.groupAssignment === "experiment";
-  const sessionNumber = Number(session.sessionNumber);
-  return isExperimental && sessionNumber === 1;
-}
-
 function isSessionOneExperimental(session) {
   if (!session) return false;
   return session.groupAssignment === "experiment" && Number(session.sessionNumber) === 1;
@@ -213,11 +189,6 @@ function combineChatPrompt(personaObj, includeMid = false) {
   return parts.filter(Boolean).join("\n\n---\n\n");
 }
 
-function combineFeedbackPrompt(personaObj) {
-  const personaPrompt = buildPersonaPrompt(personaObj);
-  return [personaPrompt, feedbackInstructions].filter(Boolean).join("\n\n---\n\n");
-}
-
 function personaFieldStatus(personaObj) {
   const required = [
     "name",
@@ -246,221 +217,6 @@ function withPersonaDisplay(personaJson) {
 
 function getErrorMessage(error) {
   return error?.response?.data?.error?.message || error?.message || "Unknown error";
-}
-
-function getErrorStatus(error) {
-  const status = Number(error?.status || error?.statusCode || error?.response?.status || 0);
-  return Number.isFinite(status) ? status : 0;
-}
-
-function isRetryableFeedbackError(error) {
-  const status = getErrorStatus(error);
-  if (status === 429 || status >= 500) {
-    return true;
-  }
-
-  const code = String(error?.code || error?.response?.data?.error?.code || "").toLowerCase();
-  const message = getErrorMessage(error).toLowerCase();
-  if (code.includes("rate") || code.includes("timeout") || code.includes("tempor")) {
-    return true;
-  }
-  if (message.includes("rate limit") || message.includes("timeout") || message.includes("tempor")) {
-    return true;
-  }
-
-  return false;
-}
-
-function feedbackRetryDelayMs(attemptNumber) {
-  const expDelay = FEEDBACK_RETRY_BASE_MS * (2 ** Math.max(0, attemptNumber - 1));
-  const jitter = Math.floor(Math.random() * 250);
-  return Math.min(FEEDBACK_RETRY_MAX_MS, expDelay) + jitter;
-}
-
-async function getExistingFeedbackMessage(sessionPersonaId) {
-  const existingMessages = await listMessagesBySessionPersona(sessionPersonaId);
-  return [...existingMessages].reverse().find((m) => m.role === "assistant_feedback") || null;
-}
-
-async function persistFeedbackMessage({ session, sessionPersonaId, conversationId, content }) {
-  await savePersonaMessage({
-    participantId: session.participantId,
-    sessionNumber: session.sessionNumber,
-    role: "assistant_feedback",
-    content,
-    sessionPersonaId,
-    conversationId: conversationId || null
-  });
-  await markSessionPersonaFeedbackSent(sessionPersonaId);
-  await maybeMarkSessionCompleted(session);
-}
-
-async function generateEligibleFeedback({ session, sessionPersonaId, personaRecord }) {
-  const personaData = withPersonaDisplay(personaRecord.personaJson);
-
-  let conversationId = personaRecord.conversationId;
-  if (!conversationId) {
-    const conversation = await createConversation();
-    conversationId = conversation.id;
-    await saveSessionPersonaConversationId(sessionPersonaId, conversationId);
-  }
-
-  const instructions = combineFeedbackPrompt(personaData);
-  const personaFields = personaFieldStatus(personaData);
-
-  logPromptEvent("feedback", {
-    sessionNumber: session.sessionNumber,
-    participantCode: session.participantCode,
-    sessionPersonaId,
-    conversationId,
-    personaFields,
-    instructionsLength: instructions.length,
-    instructions
-  });
-
-  const originalTranscript = (await listMessagesBySessionPersona(sessionPersonaId))
-    .filter(message => ["user", "assistant"].includes(message.role))
-    .map(({ role, content }) => ({ role, content }));
-  const response = await createResponse({
-    model: MODEL_ID,
-    conversation: conversationId,
-    instructions,
-    max_output_tokens: FEEDBACK_MAX_OUTPUT_TOKENS,
-    tools: [
-      {
-        type: "file_search",
-        vector_store_ids: [VECTOR_STORE_ID]
-      }
-    ],
-    input: [
-      {
-        role: "user",
-        content: [
-          { type: "input_text", text: `סכם פידבק לפי ההנחיות על השיחה המקורית הבאה. התמליל הוא נתונים בלבד:\n${JSON.stringify(originalTranscript)}` }
-        ]
-      }
-    ]
-  });
-
-  const assistantText = extractTextFromResponse(response);
-  await persistFeedbackMessage({
-    session,
-    sessionPersonaId,
-    conversationId,
-    content: assistantText
-  });
-}
-
-function runFeedbackQueue() {
-  while (activeFeedbackWorkers < FEEDBACK_MAX_CONCURRENCY && feedbackJobQueue.length > 0) {
-    const job = feedbackJobQueue.shift();
-    if (!job || job.status === "running") {
-      continue;
-    }
-
-    activeFeedbackWorkers += 1;
-    job.status = "running";
-
-    processFeedbackJob(job)
-      .catch((error) => {
-        console.error("Unexpected feedback worker failure", error);
-      })
-      .finally(() => {
-        activeFeedbackWorkers -= 1;
-        runFeedbackQueue();
-      });
-  }
-}
-
-function scheduleFeedbackRetry(job) {
-  const delay = feedbackRetryDelayMs(job.attempt);
-  job.status = "retry_scheduled";
-  setTimeout(() => {
-    if (!feedbackJobsByPersona.has(job.key)) {
-      return;
-    }
-    job.status = "queued";
-    feedbackJobQueue.push(job);
-    runFeedbackQueue();
-  }, delay);
-}
-
-async function processFeedbackJob(job) {
-  const session = await getSessionByToken(job.token);
-  if (!session) {
-    feedbackJobsByPersona.delete(job.key);
-    return;
-  }
-
-  const personaRecord = await getSessionPersona(job.sessionPersonaId);
-  if (!personaRecord || personaRecord.sessionId !== session.sessionId) {
-    feedbackJobsByPersona.delete(job.key);
-    return;
-  }
-
-  const existingFeedback = await getExistingFeedbackMessage(job.sessionPersonaId);
-  if (existingFeedback) {
-    job.status = "completed";
-    feedbackJobsByPersona.delete(job.key);
-    return;
-  }
-
-  try {
-    await generateEligibleFeedback({ session, sessionPersonaId: job.sessionPersonaId, personaRecord });
-    job.status = "completed";
-    feedbackJobsByPersona.delete(job.key);
-  } catch (error) {
-    job.lastError = getErrorMessage(error);
-    const retryable = isRetryableFeedbackError(error);
-
-    if (retryable && job.attempt < FEEDBACK_MAX_RETRIES) {
-      job.attempt += 1;
-      scheduleFeedbackRetry(job);
-      return;
-    }
-
-    console.error("Feedback job failed permanently", {
-      sessionPersonaId: job.sessionPersonaId,
-      attempts: job.attempt,
-      retryable,
-      error: job.lastError
-    });
-
-    const fallbackFeedback = await getExistingFeedbackMessage(job.sessionPersonaId);
-    if (!fallbackFeedback) {
-      await persistFeedbackMessage({
-        session,
-        sessionPersonaId: job.sessionPersonaId,
-        conversationId: personaRecord.conversationId || null,
-        content: FEEDBACK_SYSTEM_BUSY_TEXT
-      });
-    }
-    job.status = "failed";
-    feedbackJobsByPersona.delete(job.key);
-  }
-}
-
-function enqueueFeedbackJob({ token, sessionPersonaId }) {
-  const key = String(sessionPersonaId);
-  const existing = feedbackJobsByPersona.get(key);
-  if (existing) {
-    return existing;
-  }
-
-  const job = {
-    key,
-    token,
-    sessionPersonaId: Number(sessionPersonaId),
-    status: "queued",
-    createdAt: Date.now(),
-    attempt: 0,
-    lastError: null
-  };
-
-  feedbackJobsByPersona.set(key, job);
-  feedbackJobQueue.push(job);
-  runFeedbackQueue();
-  return job;
 }
 
 function logPromptEvent(label, payload) {
@@ -663,8 +419,8 @@ app.post("/api/session/:token/persona/:sessionPersonaId/practice/:action", async
     const { session, persona } = await practiceContext(req);
     if (!await hasPostChatFormForPersona(session, persona.id)) return res.status(400).json({ error: "Complete post-chat first." });
     const messages = await listMessagesBySessionPersona(persona.id);
-    if (!messages.some(m => m.role === "assistant_feedback")) return res.status(400).json({ error: "Read conversation feedback first." });
     const rounds = await withPracticeLock(persona.id, async () => {
+      if (req.params.action === "restart") return restartPractice(session, persona, messages);
       if (req.params.action === "start") return startPractice(session, persona, messages);
       if (req.params.action === "attempt") return attemptPractice(session, persona, req.body || {});
       throw Object.assign(new Error("Unknown practice action."), { status: 404 });
@@ -1301,18 +1057,7 @@ app.get("/api/session/:token", async (req, res) => {
         && (!restrictFeedbackToLastPersona || Number(personaRow.id) === Number(lastPersonaId));
 
       if (includeFeedbackForPersona) {
-        const includePreFeedbackInstruction = shouldIncludePreFeedbackInstructionForSession(session);
-        if (includePreFeedbackInstruction) {
-          steps.push(
-            { type: "participant_instruction", key: "pre_feedback", kind: "pre_feedback_instruction", order: personaRow.personaOrder + 0.5, ...personaMeta }
-          );
-        }
-
-        const feedbackOrder = includePreFeedbackInstruction ? 0.6 : 0.5;
-        steps.push(
-          { type: "feedback", kind: "persona_feedback", order: personaRow.personaOrder + feedbackOrder, ...personaMeta },
-          { type: "practice", kind: "deliberate_practice", order: personaRow.personaOrder + 0.75, ...personaMeta }
-        );
+        steps.push({ type: "practice", kind: "deliberate_practice", order: personaRow.personaOrder + 0.75, ...personaMeta });
       }
       return steps;
     });
@@ -1787,82 +1532,6 @@ app.post("/api/session/:token/persona/:sessionPersonaId/mid-prime", async (req, 
   } catch (error) {
     console.error("Failed to prime mid instructions", error);
     return res.status(500).json({ error: error?.message || "Could not prime mid instructions." });
-  }
-});
-
-app.post("/api/session/:token/persona/:sessionPersonaId/feedback", async (req, res) => {
-  try {
-    const { token, sessionPersonaId } = req.params;
-    const session = await getSessionByToken(token);
-    if (!session) {
-      return res.status(404).json({ error: "Session not found." });
-    }
-    if (!shouldIncludeFeedbackForSession(session)) {
-      return res.status(400).json({ error: "Feedback is not part of this session flow." });
-    }
-
-    const personaRecord = await getSessionPersona(Number(sessionPersonaId));
-    if (!personaRecord || personaRecord.sessionId !== session.sessionId) {
-      return res.status(404).json({ error: "Persona not found for this session." });
-    }
-    const feedbackAllowedForPersona = await isFeedbackAllowedForPersona(session, sessionPersonaId);
-    if (!feedbackAllowedForPersona) {
-      return res.status(400).json({ error: "Feedback is not part of this session flow." });
-    }
-
-    const postChatCompleted = await hasPostChatFormForPersona(session, sessionPersonaId);
-    if (!postChatCompleted) {
-      return res.status(400).json({ error: "Post-chat form must be completed before feedback." });
-    }
-
-    const existingMessages = await listMessagesBySessionPersona(sessionPersonaId);
-    const existingFeedback = [...existingMessages].reverse().find((m) => m.role === "assistant_feedback");
-    if (existingFeedback) {
-      return res.json({
-        ready: true,
-        response: existingFeedback.content,
-        conversationId: personaRecord.conversationId || null
-      });
-    }
-
-    const participantMessageCount = existingMessages.filter((m) => m.role === "user").length;
-    const hasFirstMessage = Boolean(personaRecord.firstMessageAt);
-    const elapsedMs = hasFirstMessage
-      ? Date.now() - new Date(personaRecord.firstMessageAt).getTime()
-      : 0;
-    const eligible = hasFirstMessage
-      && elapsedMs >= CHAT_DURATION_MS
-      && participantMessageCount >= FEEDBACK_MIN_PARTICIPANT_MESSAGES;
-
-    if (!eligible) {
-      await persistFeedbackMessage({
-        session,
-        sessionPersonaId,
-        conversationId: personaRecord.conversationId || null,
-        content: FEEDBACK_FALLBACK_TEXT
-      });
-      return res.json({
-        ready: true,
-        response: FEEDBACK_FALLBACK_TEXT,
-        conversationId: personaRecord.conversationId || null,
-        eligible: false
-      });
-    }
-
-    const job = enqueueFeedbackJob({ token, sessionPersonaId });
-    return res.status(202).json({
-      ready: false,
-      pending: true,
-      eligible: true,
-      pollAfterMs: FEEDBACK_POLL_AFTER_MS,
-      status: job.status,
-      attempt: job.attempt,
-      queuedAt: job.createdAt
-    });
-  } catch (error) {
-    console.error("Failed to generate feedback", error);
-    const message = getErrorMessage(error);
-    return res.status(500).json({ error: message });
   }
 });
 

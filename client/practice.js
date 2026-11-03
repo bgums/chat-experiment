@@ -1,5 +1,5 @@
 // Dedicated practice renderer. Patient dialogue and coaching are separate DOM elements.
-export async function renderPractice({ step, container, fetchApi, readOnly, next, isCurrent }) {
+export async function renderPractice({ step, container, fetchApi, readOnly, next, isCurrent, parseMarkdown }) {
   const endpoint = `/api/session/${step.token}/persona/${step.sessionPersonaId}/practice`;
   let data;
   let busy = false;
@@ -37,29 +37,40 @@ export async function renderPractice({ step, container, fetchApi, readOnly, next
     return node;
   }
   function heading(text) { card.append(element("h3", text)); }
-  function coach(text, attempt = null) {
+  function formattedMessage(text) {
+    const body = element("div", "", "practice-markdown");
+    if (!parseMarkdown) { body.textContent = text || ""; return body; }
+    const template = document.createElement("template");
+    template.innerHTML = parseMarkdown(text || "");
+    // Keep text formatting, without executable HTML or model-provided attributes.
+    const allowed = new Set(["P", "BR", "STRONG", "B", "EM", "I", "UL", "OL", "LI", "BLOCKQUOTE", "CODE", "PRE", "H1", "H2", "H3", "H4", "H5", "H6", "HR", "DEL"]);
+    for (const node of [...template.content.querySelectorAll("*")].reverse()) {
+      if (["SCRIPT", "STYLE", "IFRAME", "OBJECT", "SVG", "MATH"].includes(node.tagName)) node.remove();
+      else if (!allowed.has(node.tagName)) node.replaceWith(...node.childNodes);
+      else for (const attribute of [...node.attributes]) node.removeAttribute(attribute.name);
+    }
+    body.append(template.content);
+    return body;
+  }
+  function coach(text, attempt = null, title = "רמז") {
     const note = element("aside", "", "practice-coach");
     if (attempt && data.config.showScoresToParticipant) {
       note.append(element("strong", `ציון: ${attempt.score ?? "טרם הוגדר בפרוטוקול"}`, "practice-score"));
     }
-    note.append(element("strong", attempt ? "משוב על הניסיון" : "הכוונה לתרגול"), element("p", text));
+    note.append(element("strong", attempt ? "משוב על הניסיון" : title), formattedMessage(text));
     return note;
   }
-  function introduction(round) {
-    if (!isCurrent()) return;
-    card.replaceChildren();
-    heading(`כיוון תרגול ${round.round_number}: ${round.plan.title}`);
-    if (round.plan.originalStrategyExplanation) card.append(element("p", `בשיחה המקורית: ${round.plan.originalStrategyExplanation}`, "muted"));
-    card.append(element("p", round.plan.explanation));
-    for (const [label, key] of [["עקרונות", "principles"], ["יישום", "application"]]) {
-      card.append(element("h4", label), element("p", round.plan[key]));
-    }
-    card.append(button("מעבר לתרגול", () => dialogue(round)), errorBox);
+  function restartButton() {
+    return button("התחלה מחדש של האימון", async () => {
+      data = await request("restart");
+      dialogue(data.rounds.at(-1));
+    });
   }
   function dialogue(round) {
     if (!isCurrent()) return;
     card.replaceChildren();
     heading(round.plan.title);
+    if (!readOnly) card.append(restartButton());
     const attemptNumber = round.status === "active" ? round.attempts.length + 1 : round.attempts.length;
     card.append(element("p", `ניסיון ${attemptNumber} מתוך ${round.config.maxAttemptsPerStrategy}`, "muted"));
     const chat = element("div", "", "practice-dialogue");
@@ -73,7 +84,7 @@ export async function renderPractice({ step, container, fetchApi, readOnly, next
     const firstExcerptIndex = (data.originalMessages || []).findIndex(message => message.id === round.plan.excerpt[0]?.id);
     const earlierOriginal = firstExcerptIndex > 0 ? data.originalMessages.slice(0, firstExcerptIndex) : [];
     const entries = round.plan.excerpt.map(message => ({ ...message }));
-    entries.push({ coaching: round.plan.hint });
+    entries.push({ coaching: round.plan.feedback, title: "פידבק" }, { coaching: round.plan.hint, title: "רמז" });
     for (const attempt of round.attempts) {
       entries.push({ role: "user", content: attempt.therapist_message }, { role: "assistant", content: attempt.patient_message }, { coaching: attempt.feedback, attempt });
     }
@@ -88,7 +99,7 @@ export async function renderPractice({ step, container, fetchApi, readOnly, next
     const current = element("div", "", "practice-current");
     function drawEntry(target, entry) {
       if (entry.role) message(target, entry.role, entry.content);
-      else target.append(coach(entry.coaching, entry.attempt));
+      else target.append(coach(entry.coaching, entry.attempt, entry.title));
     }
     let historyButton;
     if (hiddenEntries.length) {
@@ -148,11 +159,12 @@ export async function renderPractice({ step, container, fetchApi, readOnly, next
     if (!isCurrent()) return;
     card.replaceChildren();
     heading(`סיכום התרגול: ${round.plan.title}`);
-    card.append(element("p", round.attempts.at(-1)?.summary || ""));
+    if (!readOnly) card.append(restartButton());
+    card.append(formattedMessage(round.attempts.at(-1)?.summary || ""));
     card.append(element("p", round.status === "early_stopped" ? "התרגול הסתיים. אפשר לקחת את הלמידה להמשך." : "הגענו למספר הניסיונות שנקבע. אפשר לקחת את הלמידה להמשך התרגול.", "muted"));
     const total = data.config.strategiesPerChat;
     if (data.rounds.length < total && !readOnly) {
-      card.append(button("היכרות עם כיוון חדש", async () => { data = await request("start"); introduction(data.rounds.at(-1)); }));
+      card.append(button("היכרות עם כיוון חדש", async () => { data = await request("start"); dialogue(data.rounds.at(-1)); }));
     } else card.append(button("המשך", next));
     card.append(errorBox);
   }
@@ -160,17 +172,18 @@ export async function renderPractice({ step, container, fetchApi, readOnly, next
     data = await request();
     if (!isCurrent()) return;
     if (!data.rounds.length) {
-      card.replaceChildren();
-      heading("אימון מכוון באיחוי קרעים");
-      card.append(element("p", "נחזור לרגע מתוך השיחה ונתרגל דרכי תגובה נוספות."));
-      if (!readOnly) card.append(button("בחירת רגע לתרגול", async () => { data = await request("start"); introduction(data.rounds.at(-1)); }));
-      else card.append(element("p", "אין תרגול שמור לשיחה זו."), button("המשך", next));
-      card.append(errorBox);
+      if (!readOnly) {
+        data = await request("start");
+        dialogue(data.rounds.at(-1));
+      } else {
+        card.replaceChildren();
+        heading("אימון מכוון באיחוי קרעים");
+        card.append(element("p", "אין תרגול שמור לשיחה זו."), button("המשך", next), errorBox);
+      }
     } else {
       const round = data.rounds.at(-1);
       if (round.status !== "active") summary(round);
-      else if (round.attempts.length) dialogue(round);
-      else introduction(round);
+      else dialogue(round);
     }
   }
   card.append(element("p", "טוען אימון…"));

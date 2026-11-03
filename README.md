@@ -19,8 +19,8 @@ existing research database before upgrading it.
 `server/config/sessionFlow.json` defines the four meetings. Each includes consent,
 confidentiality request. Demographics appears only in session 1, alongside the existing alliance
 introduction module. Each patient interaction includes pre-chat instructions,
-an eight-minute chat, the existing post-chat questionnaire, the existing feedback,
-and deliberate practice. In session 1, feedback and practice occur only after the
+an eight-minute chat, the existing post-chat questionnaire,
+and deliberate practice with inline feedback and hint messages. In session 1, practice occurs only after the
 second conversation. Sessions 2–4 include them after both conversations.
 Each meeting ends with completion; session 4 shows the final study thank-you.
 
@@ -33,7 +33,8 @@ column `group_assignment` is renamed to `group`, and `reading_order` is removed.
 
 | File | Purpose |
 | --- | --- |
-| `server/instructions/feedback_instructions.txt` | Existing conversation feedback, retained |
+| `server/instructions/practice_feedback.txt` | Blank dedicated prompt for initial DP feedback; fill in your instructions |
+| `server/instructions/practice_hint.txt` | Blank dedicated prompt for the DP hint; fill in your instructions |
 | `server/instructions/deliberate_practice_selection.txt` | **Dedicated location for your selection prompt**; contains a working draft |
 | `server/instructions/deliberate_practice_evaluation.txt` | Assessment and short feedback for each attempt; contains a working draft |
 | `server/config/deliberatePractice.json` | `maxAttemptsPerStrategy`: **3**; `strategiesPerChat`: **1**; `showScoresToParticipant`: **true** for current testing |
@@ -41,19 +42,19 @@ column `group_assignment` is renamed to `group`, and `reading_order` is removed.
 Restart after editing prompts/configuration. The first round snapshots the attempt
 limit and model for that conversation. The current strategy count and score visibility
 apply also to existing practice sequences; old extra rounds remain in research data.
-Selection and evaluation prompt hashes identify the versions actually used. Archive
+Selection, coaching and evaluation prompt hashes identify the versions actually used. Archive
 the corresponding prompt files with each research deployment.
 
 The selector receives the original transcript and the participant's strategy
 history across sessions. It classifies the original repair strategy and proposes
 an alternative with a stable `snake_case` ID, explanation, principles, application
-and brief hint. The server validates the selected patient message and copies the
+and application. Separate calls generate feedback and hint using the dedicated prompts. While a prompt is blank, its card displays “הפרומפט טרם הוגדר.” The server validates the selected patient message and copies the
 excerpt directly from the transcript. A subsequent round in the same conversation
 must use a different strategy. Earlier sessions inform selection without forbidding
 repetition across sessions.
 
-The participant sees the explanation, then three original messages in the order
-therapist → patient → therapist, and a coaching card. They write a replacement for
+The participant sees three original messages in the order
+therapist → patient → therapist, followed by feedback and hint in matching coaching cards. They write a replacement for
 the last therapist response. The original response is excluded from the rehearsal
 model's dialogue context. Every therapist message receives a patient reply and short
 assessment. Dialogue continues until the configured attempt limit, regardless of
@@ -74,6 +75,8 @@ Patient replies and evaluation use separate model calls. Practice does not modif
 the original conversation. An attempt is saved only after both calls succeed;
 network retries return an already saved matching attempt. Concurrent requests for
 one patient are guarded in memory: deployment assumes one Node.js server process.
+
+A temporary “התחלה מחדש של האימון” button in practice and its summary deletes this conversation’s practice rounds and attempts and starts fresh from its original transcript. It creates no archive and leaves other conversations intact.
 
 ## Research data
 

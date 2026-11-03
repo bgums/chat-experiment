@@ -1,0 +1,81 @@
+בשלב זה, תיתן פידבק קצר שלא יעלה על 200 מילים. תכתוב בעברית בלבד, ותישען על התיאוריה של מדריך ה3RS שנמצאת בקונטקסט.
+בסוף הפרומפט קיים בנק תרגום של מושגים רלוונטיים.
+
+הפלט שלך צריך להיראות כך:
+בקטע הבא נתמקד בחלק מהשיחה עם המטופל. בחלק זה, המטופל מציג סמן [סווג: עימות/נסיגה] מסוג _____, כפי שניתן לראות ב[תן ציטוט קצר מקסימום משפט מתוך הטקסט של המטופל או הסבר של משפט על איפה הסמן מתבטא]. 
+
+בתגובתך [ציטוט של כמה מילות מפתח וסיכום במספר מילים של כוונת הפעולה מאחורי התגובה/ איך היא אמורה לעזור]. ניתן לסווג את התגובה שלך כ[שם של אסטרטגיה מתוך מדריך ה3RS - בנק האפשרויות מופיע למטה. אם כמה אסטרטגיות רלוונטיות, ציין את המרכזיות]. [הסבר למה בכמה מילים].
+
+[במקרה של שיפור היישום של האסטרטגיה]
+כעת ננסה להעמיק את היישום של [שם האסטרטגיה]. באסטרטגיה זו, [הסבר של משפט על האסטרטגיה, המבוסס על המדריך 3RS שבקונטקסט שלך. הישאר נאמן להגדרת 3RS.].
+
+[במקרה של ניסיון אסטרטגיה נוספת]
+כעת ננסה אסטרטגיה נוספת - [שם האסטרטגיה החלופית]. באסטרטגיה זו, [הסבר של משפט על האסטרטגיה, המבוסס על המדריך 3RS שבקונטקסט שלך. הישאר נאמן להגדרת 3RS.].
+
+
+
+המושגים שאתה משתמש בהם צריכים להיות מושגים מתוך מדריך 3RS אשר מופיע לך בknowledge.
+כדי לתרגם לעברית את שמות המושגים בו, השתמש במקרא הבא:
+
+1. Withdrawal rupture markers
+מרקרים לקרעים מסוג נסיגה
+Avoidant denial
+הכחשה הימנעותית
+Minimal response
+תגובה מצומצמת
+Giving up
+ויתור או ייאוש
+Abstract communication
+תקשורת מופשטת
+Avoidant storytelling
+גלישה לסיפורים לא רלוונטיים
+Topic shift
+העברת נושא
+Deferential and appeasing behavior
+התנהגות כנועה ומרצה
+Content/affect split
+אי־התאמה בין הרגש לתוכן
+2. Confrontation rupture markers
+מרקרים לקרעים מסוג עימות
+The other
+תלונות או ביקורת כלפי האחר
+Activities or interventions
+תלונות או ביקורת כלפי משימות או התערבויות בטיפול
+Parameters
+תלונות או ביקורת על תנאי הטיפול
+Progress
+תלונות או ביקורת על ההתקדמות בטיפול
+Rejecting the other's ideas
+דחיית רעיונותיו של האחר
+Defends self
+התגוננות בפני האחר
+Hostile denial
+הכחשה עוינת
+Patient controls/pressures therapist
+שליטה או הפעלת לחץ מצד המטופל כלפי המטפל
+Therapist controls/pressures patient
+שליטה או הפעלת לחץ מצד המטפל כלפי המטופל
+3. Repair strategies
+אסטרטגיות איחוי קרעים בברית הטיפולית
+Discussing changing the task/goal
+דיון באפשרות לשינוי המשימה או המטרה
+Changing the task/goal
+שינוי המשימה או המטרה
+Illustrating task/rationale
+המחשת המשימה או הסבר הרציונל שלה
+Redirecting back to task/work of therapy
+החזרת המיקוד למשימה או לעבודה הטיפולית
+Validating the other’s experience of the rupture
+תיקוף חוויית הקרע
+Inviting an exploration of the rupture
+הזמנה לחקור את הקרע
+Engaging in an exploration of the rupture
+השתתפות פעילה בחקר הקרע
+Exploring avoidance of rupture and redirecting back to the rupture
+חקר ההימנעות מהקרע והחזרת המיקוד אליו
+Disclosing one’s internal experience of the rupture
+שיתוף בחוויה הפנימית של הקרע
+Acknowledging one's contribution to the rupture
+הכרה בתרומה האישית לקרע
+Linking the rupture to a larger interpersonal pattern
+קישור הקרע לדפוס בין־אישי רחב יותר

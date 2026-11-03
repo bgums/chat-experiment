@@ -58,7 +58,7 @@ export async function createResponse(payload) {
           originalStrategyId: "problem_solving", originalStrategyExplanation: "ניסיון להציע פתרון.",
           strategyId: data.excludedStrategyIds.length ? "explore_rupture" : "validate_emotion",
           title: "תרגול איחוי", explanation: "התייחסות לרגע של קושי בקשר.",
-          principles: "הקשבה וסקרנות.", application: "התייחסות לחוויה של המטופל.", hint: "נסו לברר כיצד נחוותה התגובה שלכם."
+          principles: "הקשבה וסקרנות.", application: "התייחסות לחוויה של המטופל."
         });
       } else if (formatName === "practice_evaluation") {
         const data = JSON.parse(payload.input);
