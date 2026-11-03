@@ -45,6 +45,7 @@ import { ensureSessionPersonas, buildPersonaPrompt, getAllPersonas } from "./uti
 import { nowGmtPlus3Iso } from "./utils/timezone.js";
 import { listPracticeRounds } from "./db.js";
 import { practiceConfig, startPractice, attemptPractice, withPracticeLock, practiceComplete } from "./practice.js";
+import { participantPracticePayload } from "./utils/practicePresentation.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -653,7 +654,7 @@ async function practiceContext(req) {
 app.get("/api/session/:token/persona/:sessionPersonaId/practice", async (req, res) => {
   try {
     const { session, persona } = await practiceContext(req);
-    res.json({ config: practiceConfig, rounds: await listPracticeRounds(session.participantId, persona.id) });
+    res.json(participantPracticePayload(practiceConfig, await listPracticeRounds(session.participantId, persona.id), await listMessagesBySessionPersona(persona.id)));
   } catch (error) { res.status(error.status || 500).json({ error: error.message }); }
 });
 
@@ -668,7 +669,7 @@ app.post("/api/session/:token/persona/:sessionPersonaId/practice/:action", async
       if (req.params.action === "attempt") return attemptPractice(session, persona, req.body || {});
       throw Object.assign(new Error("Unknown practice action."), { status: 404 });
     });
-    res.json({ config: practiceConfig, rounds });
+    res.json(participantPracticePayload(practiceConfig, rounds, messages));
   } catch (error) {
     console.error("Practice request failed", error);
     res.status(error.status || 500).json({ error: error.status ? error.message : "האימון לא נטען. אפשר לנסות שוב; ההתקדמות השמורה נשמרת." });

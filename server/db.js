@@ -4,6 +4,7 @@ import fs from "fs";
 import { fileURLToPath } from "url";
 import { randomUUID } from "crypto";
 import { nowGmtPlus3Iso, toGmtPlus3Iso } from "./utils/timezone.js";
+import { getPracticeStatus } from "./utils/practiceProgress.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -103,8 +104,8 @@ function createDatabase() {
       therapist_message TEXT NOT NULL,
       patient_message TEXT NOT NULL,
       feedback TEXT NOT NULL,
-      sufficient INTEGER NOT NULL,
       summary TEXT NOT NULL,
+      score REAL,
       evaluation_prompt_hash TEXT NOT NULL,
       created_at TEXT NOT NULL,
       UNIQUE(round_id, attempt_number)
@@ -234,7 +235,7 @@ export async function listPracticeRounds(participantId, personaId = null) {
     delete round.config_json;
     round.attempts = await practiceQuery("SELECT * FROM practice_attempts WHERE round_id = ? ORDER BY attempt_number", [round.id]);
     const last = round.attempts.at(-1);
-    round.status = last?.sufficient ? "mastered" : round.attempts.length >= round.config.maxAttemptsPerStrategy ? "attempt_limit" : "active";
+    round.status = getPracticeStatus(round);
     round.completed_at = round.status === "active" ? null : last.created_at;
   }
   return rounds;
@@ -1363,7 +1364,12 @@ export function resetDatabaseForDev() {
 
 // Complete schema migration sequentially before importers can serve requests.
 await practiceQuery("SELECT 1 FROM participants LIMIT 1");
+const practiceAttemptColumns = await practiceQuery("PRAGMA table_info(practice_attempts)");
+if (practiceAttemptColumns.some(column => column.name === "sufficient")) {
+  await practiceRun("ALTER TABLE practice_attempts DROP COLUMN sufficient");
+}
 for (const [table, column, definition] of [
+  ["practice_attempts", "score", "REAL"],
   ["participants", "subject_id", "TEXT"],
   ["participants", "schedule_start", "TEXT"],
   ["participants", "notes", "TEXT"],

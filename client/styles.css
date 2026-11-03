@@ -1056,3 +1056,8 @@ body {
 .practice-form textarea { width: 100%; box-sizing: border-box; padding: 14px; font: inherit; border-radius: 8px; border: 1px solid #94a7b2; resize: vertical; }
 .practice-form button { justify-self: end; padding: 10px 24px; }
 .practice-error { color: #a52a2a; white-space: pre-wrap; }
+.practice-current, .practice-history { display: flex; flex-direction: column; gap: 16px; }
+.practice-current { min-height: 55vh; flex-shrink: 0; }
+.practice-history { flex-shrink: 0; }
+.practice-history .muted { margin: 0; }
+.practice-score { display: block; margin-bottom: 8px; }

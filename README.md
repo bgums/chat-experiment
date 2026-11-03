@@ -17,7 +17,7 @@ existing research database before upgrading it.
 ## Flow
 
 `server/config/sessionFlow.json` defines the four meetings. Each includes consent,
-confidentiality request and demographics. Session 1 adds the existing alliance
+confidentiality request. Demographics appears only in session 1, alongside the existing alliance
 introduction module. Each patient interaction includes pre-chat instructions,
 an eight-minute chat, the existing post-chat questionnaire, the existing feedback,
 and deliberate practice. In session 1, feedback and practice occur only after the
@@ -36,10 +36,11 @@ column `group_assignment` is renamed to `group`, and `reading_order` is removed.
 | `server/instructions/feedback_instructions.txt` | Existing conversation feedback, retained |
 | `server/instructions/deliberate_practice_selection.txt` | **Dedicated location for your selection prompt**; contains a working draft |
 | `server/instructions/deliberate_practice_evaluation.txt` | Assessment and short feedback for each attempt; contains a working draft |
-| `server/config/deliberatePractice.json` | `maxAttemptsPerStrategy`: **3**; `strategiesPerChat`: **2**; version and message length limit |
+| `server/config/deliberatePractice.json` | `maxAttemptsPerStrategy`: **3**; `strategiesPerChat`: **1**; `showScoresToParticipant`: **true** for current testing |
 
-Restart after editing prompts/configuration. The first round snapshots the limits
-and model for that conversation, so an ongoing practice sequence keeps its limits.
+Restart after editing prompts/configuration. The first round snapshots the attempt
+limit and model for that conversation. The current strategy count and score visibility
+apply also to existing practice sequences; old extra rounds remain in research data.
 Selection and evaluation prompt hashes identify the versions actually used. Archive
 the corresponding prompt files with each research deployment.
 
@@ -51,11 +52,23 @@ excerpt directly from the transcript. A subsequent round in the same conversatio
 must use a different strategy. Earlier sessions inform selection without forbidding
 repetition across sessions.
 
-The participant sees the explanation, then the excerpt and a coaching card below
-the patient message. Every therapist message receives a patient reply and short
-assessment. A sufficient assessment ends the round; otherwise dialogue continues
-up to the attempt limit. Reaching the limit is distinguished from success. A round
-summary leads to the next strategy explanation or onward to session completion.
+The participant sees the explanation, then three original messages in the order
+therapist → patient → therapist, and a coaching card. They write a replacement for
+the last therapist response. The original response is excluded from the rehearsal
+model's dialogue context. Every therapist message receives a patient reply and short
+assessment. Dialogue continues until the configured attempt limit, regardless of
+the score or feedback content. A round
+summary leads onward after one strategy. Only three dialogue messages are expanded;
+scrolling up reveals “הצג הודעות קודמות” with “אנחנו ממליצים להתקדם קדימה בתרגול”.
+Clicking expands earlier source dialogue and earlier rehearsal turns/feedback.
+
+Each assessment also returns a separate numeric `score`, stored in the database
+and shown at the beginning of feedback while `showScoresToParticipant` is true.
+Set this flag to **false before participant runs**: scores are then removed from
+participant API responses while remaining available to admin/export. The evaluation
+prompt has a dedicated researcher scoring-protocol section. Until a rubric is
+written there, scores are null (shown as “טרם הוגדר בפרוטוקול”); no scale is invented.
+Older assessments remain null. The verbal feedback must not include the score.
 
 Patient replies and evaluation use separate model calls. Practice does not modify
 the original conversation. An attempt is saved only after both calls succeed;
@@ -70,12 +83,18 @@ one patient are guarded in memory: deployment assumes one Node.js server process
 - `practice_rounds`: participant/session/patient references, round number, original
   and selected strategy, source message ID and exact excerpt, explanation, hint,
   configuration snapshot, model and selection prompt hash.
-- `practice_attempts`: ordered therapist message, patient reply, feedback,
-  sufficient flag, summary, evaluation prompt hash and timestamp.
+- `practice_attempts`: ordered therapist message, patient reply, feedback, numeric score,
+  summary, evaluation prompt hash and timestamp.
 
-Round status (`active`, `mastered`, `attempt_limit`) is derived from attempts,
+Round status (`active`, `attempt_limit`, or future `early_stopped`) is derived from attempts,
 avoiding a second mutable source of truth. Session reset and participant deletion
 also clear associated practice data.
+
+`server/utils/practiceProgress.js` contains the researcher extension point
+`shouldStopPracticeEarly({ attempts, config, plan })`. It currently always returns
+false. Implement a future early-stop rule there; no AI completion flag is requested
+or stored. Startup migration removes the obsolete completion flag column while
+retaining all other attempt data.
 
 Admin participant details contain a **Deliberate Practice** section for each session
 and a JSON download of all rounds/attempts. The authenticated export route is
@@ -85,7 +104,7 @@ and a JSON download of all rounds/attempts. The authenticated export route is
 ## Validation
 
 `npm test` uses a temporary database and simulated AI. It checks legacy migration,
-assignment, session flows, source selection, attempt limits, early mastery,
+assignment, session flows, source selection, attempt limits even for high scores,
 duplicate retries, persistence, ownership, read-only access, completion gating,
 export, reset and balanced allocation. It does not call OpenAI or modify research data.
 

@@ -7,6 +7,12 @@ import sqlite3 from "sqlite3";
 import { execFileSync } from "node:child_process";
 import vm from "node:vm";
 import crypto from "node:crypto";
+import { participantPracticePayload } from "../server/utils/practicePresentation.js";
+
+const scoredRounds = [{ config: { strategiesPerChat: 2 }, attempts: [{ score: 3, feedback: "משוב" }] }];
+assert.equal(participantPracticePayload({ strategiesPerChat: 1, showScoresToParticipant: true }, scoredRounds, []).rounds[0].attempts[0].score, 3);
+assert.ok(!("score" in participantPracticePayload({ strategiesPerChat: 1, showScoresToParticipant: false }, scoredRounds, []).rounds[0].attempts[0]));
+assert.equal(scoredRounds[0].attempts[0].score, 3); // Redaction never changes research data.
 
 const temp = await mkdtemp(path.join(os.tmpdir(), "repair-experiment-"));
 const dbPath = path.join(temp, "test.db");
@@ -17,7 +23,14 @@ await new Promise((resolve, reject) => legacy.exec(`CREATE TABLE participants (
   group_assignment TEXT DEFAULT 'experimental', reading_order TEXT DEFAULT 'withdrawal_first',
   total_sessions INTEGER DEFAULT 4, created_at TEXT DEFAULT CURRENT_TIMESTAMP, status TEXT DEFAULT 'invited'
 );
-INSERT INTO participants(participant_code, group_assignment) VALUES ('legacy-experiment','experimental'), ('legacy-control','control');`, error => error ? reject(error) : resolve()));
+INSERT INTO participants(participant_code, group_assignment) VALUES ('legacy-experiment','experimental'), ('legacy-control','control');
+CREATE TABLE practice_attempts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, round_id INTEGER NOT NULL,
+  attempt_number INTEGER NOT NULL, therapist_message TEXT NOT NULL,
+  patient_message TEXT NOT NULL, feedback TEXT NOT NULL, sufficient INTEGER NOT NULL,
+  summary TEXT NOT NULL, evaluation_prompt_hash TEXT NOT NULL, created_at TEXT NOT NULL,
+  UNIQUE(round_id, attempt_number)
+);`, error => error ? reject(error) : resolve()));
 await new Promise(resolve => legacy.close(resolve));
 const port = 32000 + Math.floor(Math.random() * 10000);
 const child = spawn(process.execPath, ["server/index.js"], {
@@ -77,7 +90,13 @@ try {
   const session = await api(`/api/session/${token}`);
   assert.equal(session.steps.filter(s => s.type === "practice").length, 2);
   assert.equal(session.steps.some(s => s.type === "module"), false);
-  assert.deepEqual(session.steps.slice(0, 3).map(s => s.key), ["consent", "confidentiality_request", "demographics"]);
+  assert.deepEqual(first.steps.filter(s => s.key === "demographics").length, 1);
+  assert.deepEqual(session.steps.slice(0, 2).map(s => s.key), ["consent", "confidentiality_request"]);
+  assert.equal(session.steps.some(s => s.key === "demographics"), false);
+  for (const meeting of invite.sessions.slice(2)) {
+    const overview = await api(`/api/session/${meeting.token}`);
+    assert.equal(overview.steps.some(s => s.key === "demographics"), false);
+  }
   const personas = session.steps.filter(s => s.type === "chat");
   const [participant] = await all("SELECT id FROM participants WHERE participant_code = ?", [invite.participantCode]);
   const [secondSession] = await all("SELECT id FROM sessions WHERE session_token = ?", [token]);
@@ -88,41 +107,47 @@ try {
   await api(`/api/session/${invite.sessions[0].token}/persona/${firstChat.sessionPersonaId}/practice/start`, {}, 403);
   for (const persona of personas) {
     await api(`/api/session/${token}/forms/post_chat`, { sessionPersonaId: persona.sessionPersonaId, responses: {} });
-    for (const [role, content] of [["user", "מה קרה בינינו?"], ["assistant", "אני מרגיש שאתה לא מבין אותי"], ["assistant_feedback", "פידבק שמור"]]) {
+    for (const [role, content] of [["assistant", "שלום"], ["user", "מה קרה בינינו?"], ["assistant", "אני מרגיש שאתה לא מבין אותי"], ["user", "תגובה מקורית"], ["assistant_feedback", "פידבק שמור"]]) {
       await run("INSERT INTO messages(participant_id, session_number, session_persona_id, role, content) VALUES (?, 2, ?, ?, ?)", [participant.id, persona.sessionPersonaId, role, content]);
     }
     const url = practiceUrl(persona);
     let data = await api(url + "/start", {});
     const initial = data.rounds[0];
-    assert.equal(initial.plan.excerpt.at(-1).content, "אני מרגיש שאתה לא מבין אותי");
+    assert.deepEqual(initial.plan.excerpt.map(message => message.role), ["user", "assistant", "user"]);
+    assert.equal(initial.plan.excerpt[1].content, "אני מרגיש שאתה לא מבין אותי");
+    assert.equal(initial.plan.excerpt.at(-1).content, "תגובה מקורית");
+    assert.equal(data.originalMessages[0].content, "שלום");
+    assert.equal(data.config.strategiesPerChat, 1);
     // Read-only requests cannot write or call the model.
     await api(url + "/attempt", {}, 403, { "X-Session-View-Only": "1" });
     await api(url + "/attempt", { roundId: initial.id, attemptNumber: 2, message: "test" }, 409);
+    const capped = persona === personas[0];
     for (let n = 1; n <= 3; n++) {
-      data = await api(url + "/attempt", { roundId: initial.id, attemptNumber: n, message: "retry" });
+      data = await api(url + "/attempt", { roundId: initial.id, attemptNumber: n, message: capped ? "retry" : "אני מבין את הקושי" });
       assert.equal(data.rounds[0].attempts.length, n);
+      assert.equal(data.rounds[0].attempts.at(-1).score, capped ? 1 : 3);
+      assert.ok(!("sufficient" in data.rounds[0].attempts.at(-1)));
+      assert.equal(data.rounds[0].status, n < 3 ? "active" : "attempt_limit");
+      if (n < 3) await api(`/api/session/${token}/complete`, {}, 400);
     }
-    assert.equal(data.rounds[0].status, "attempt_limit");
-    data = await api(url + "/attempt", { roundId: initial.id, attemptNumber: 3, message: "retry" });
+    data = await api(url + "/attempt", { roundId: initial.id, attemptNumber: 3, message: capped ? "retry" : "אני מבין את הקושי" });
     assert.equal(data.rounds[0].attempts.length, 3);
     await api(url + "/attempt", { roundId: initial.id, attemptNumber: 4, message: "retry" }, 409);
     data = await api(url + "/start", {});
-    const second = data.rounds[1];
-    assert.notEqual(second.plan.strategyId, initial.plan.strategyId);
-    data = await api(url + "/attempt", { roundId: second.id, attemptNumber: 1, message: "אני מבין את הקושי" });
-    assert.equal(data.rounds[1].status, "mastered");
-    assert.equal((await api(url)).rounds[1].attempts.length, 1);
-    assert.equal((await api(url + "/start", {})).rounds.length, 2);
+    assert.equal(data.rounds.length, 1);
+    assert.equal((await api(url)).rounds[0].attempts.length, 3);
   }
   // Original dialogue was never polluted by rehearsal.
-  assert.equal((await all("SELECT * FROM messages WHERE participant_id = ? AND session_number = 2", [participant.id])).length, 6);
+  assert.equal((await all("SELECT * FROM messages WHERE participant_id = ? AND session_number = 2", [participant.id])).length, 10);
   const details = await api(`/api/admin/participant/${invite.participantCode}/details`);
-  assert.equal(details.practice.length, 4);
+  assert.equal(details.practice.length, 2);
   assert.equal(details.practice[0].group, "experiment");
   const exportedPractice = await api(`/api/admin/participant/${invite.participantCode}/practice/export`);
   assert.equal(exportedPractice.group, "experiment");
-  assert.equal(exportedPractice.rounds.length, 4);
+  assert.equal(exportedPractice.rounds.length, 2);
+  assert.equal(exportedPractice.rounds[0].attempts[0].score, 1);
   assert.ok(exportedPractice.rounds[0].attempts[0].evaluation_prompt_hash);
+  assert.ok(!(await all("PRAGMA table_info(practice_attempts)")).some(column => column.name === "sufficient"));
   const outsider = await api("/api/admin/invite", {});
   await api(`/api/session/${outsider.sessions[1].token}/persona/${personas[0].sessionPersonaId}/practice`, undefined, 404);
   await api(`/api/session/${token}/complete`, {});
@@ -135,7 +160,7 @@ try {
   assert.ok(batch.participants.every(p => p.groupAssignment === "experiment"));
   for (const p of batch.participants) assert.equal(new Set(Object.values(p.sessionGroupMap)).size, 4);
   assert.doesNotMatch(logs, /SQLITE_ERROR|Failed to add|Could not remove/);
-  console.log("PASS: flow, experiment group, practice selection, capped retries, mastery, persistence, ownership, read-only, completion, export, reset, balanced allocation");
+  console.log("PASS: flow, experiment group, practice selection, three attempts regardless of score, legacy flag removal, persistence, ownership, read-only, completion, export, reset, balanced allocation");
 } finally {
   if (db) await new Promise(resolve => db.close(resolve));
   child.kill();

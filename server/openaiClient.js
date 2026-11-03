@@ -52,7 +52,7 @@ export async function createResponse(payload) {
       const formatName = payload.text?.format?.name;
       if (formatName === "practice_selection") {
         const data = JSON.parse(payload.input);
-        const source = data.transcript.find(message => message.role === "assistant");
+        const source = data.transcript.find(message => data.eligibleSourceMessageIds.includes(message.id));
         simulatedText = JSON.stringify({
           sourceMessageId: source.id,
           originalStrategyId: "problem_solving", originalStrategyExplanation: "ניסיון להציע פתרון.",
@@ -63,7 +63,7 @@ export async function createResponse(payload) {
       } else if (formatName === "practice_evaluation") {
         const data = JSON.parse(payload.input);
         simulatedText = JSON.stringify({
-          sufficient: !data.dialogue.at(-1).content.includes("retry"),
+          score: data.dialogue.at(-1).content.includes("retry") ? 1 : 3,
           feedback: "משוב מדומה על התגובה.", summary: "סיכום מדומה של הכיוון שנוסה."
         });
       }

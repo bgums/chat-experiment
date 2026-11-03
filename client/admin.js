@@ -670,7 +670,7 @@ function renderSessionDetails(details, selectedSession = "all") {
           <div>מטפל/ת: ${escapeHtml(attempt.therapist_message)}</div>
           <div>מטופל/ת: ${escapeHtml(attempt.patient_message)}</div>
           <div>פידבק: ${escapeHtml(attempt.feedback)}</div>
-          <div>יישום מספק: ${attempt.sufficient ? "כן" : "לא"}</div>
+          <div>ציון: ${escapeHtml(attempt.score ?? "טרם הוגדר")}</div>
           <div>${escapeHtml(attempt.summary)}</div>
         </div>`).join("")}
       </div>`).join("") || "<p>אין תרגול שמור.</p>";

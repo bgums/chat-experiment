@@ -8,22 +8,28 @@ app.get("/preview", (_req, res) => res.type("html").send(`<!doctype html>
 <body><main class="app-shell"><div id="preview" class="step-container"></div></main>
 <script type="module">
 import { renderPractice } from '/practice.js';
-const config = { maxAttemptsPerStrategy: 3, strategiesPerChat: 2, maxMessageLength: 6000 };
+const config = { maxAttemptsPerStrategy: 3, strategiesPerChat: 1, maxMessageLength: 6000, showScoresToParticipant: true };
+const originalMessages = [
+  {id:1,role:'assistant',content:'קשה לי לשתף אנשים במה שעובר עליי.'},
+  {id:2,role:'user',content:'מה קורה כשאתה מנסה לדבר על זה?'},
+  {id:3,role:'assistant',content:'אני חושש שכולם יציעו פתרונות.'},
+  {id:4,role:'user',content:'אולי כדאי שתנסה לדבר איתה ישירות.'},
+  {id:5,role:'assistant',content:'אתה מיד מציע לי פתרונות, אבל אני מרגיש שאתה בכלל לא מבין כמה זה קשה לי.'},
+  {id:6,role:'user',content:'אולי תוכל להסביר לה מה אתה צריך.'}
+];
 let rounds = [];
 const fetchApi = async (url, options) => {
   if (url.endsWith('/start')) rounds.push({id: rounds.length + 1, round_number: rounds.length + 1, config, attempts: [], status: 'active', plan: {
     title: rounds.length ? 'בירור הקרע בקשר' : 'תיקוף החוויה הרגשית', explanation: 'נחזור לרגע שבו המטופל הרגיש שלא הובן, וננסה לתת מקום לחוויה שלו.',
     principles: 'הקשבה, הכרה ברגש וסקרנות כלפי החוויה של המטופל.', application: 'תארו בזהירות את מה ששמעתם והזמינו את המטופל לתקן את הבנתכם.',
-    hint: 'נסו לתת מקום לתחושה שלא הובן, לפני שאתם מציעים פתרון.', excerpt: [
-      {role:'user', content:'אולי כדאי שתנסה לדבר איתה ישירות.'},
-      {role:'assistant', content:'אתה מיד מציע לי פתרונות, אבל אני מרגיש שאתה בכלל לא מבין כמה זה קשה לי.'}]
+    hint: 'נסו לתת מקום לתחושה שלא הובן, לפני שאתם מציעים פתרון.', excerpt: originalMessages.slice(-3)
   }});
   if (url.endsWith('/attempt')) {
     const body = JSON.parse(options.body); const round = rounds.at(-1);
-    round.attempts.push({therapist_message:body.message, patient_message:'כן, אני צריך קודם להרגיש שיש כאן מקום למה שאני עובר.', feedback:'נתת מקום לחוויה שלי בלי למהר לפתרון. אפשר להמשיך ולברר כיצד התגובה הקודמת שלך השפיעה על הקשר.', summary:'ניסית לעבור מפתרון בעיות להכרה בחוויה של המטופל.', sufficient:1});
-    round.status='mastered';
+    round.attempts.push({therapist_message:body.message, patient_message:'כן, אני צריך קודם להרגיש שיש כאן מקום למה שאני עובר.', feedback:'נתת מקום לחוויה שלי בלי למהר לפתרון. אפשר להמשיך ולברר כיצד התגובה הקודמת שלך השפיעה על הקשר.', summary:'ניסית לעבור מפתרון בעיות להכרה בחוויה של המטופל.', score:3});
+    round.status = round.attempts.length >= config.maxAttemptsPerStrategy ? 'attempt_limit' : 'active';
   }
-  return {ok:true, json:async()=>structuredClone({config, rounds})};
+  return {ok:true, json:async()=>structuredClone({config, rounds, originalMessages})};
 };
 renderPractice({step:{token:'fixture',sessionPersonaId:1,persona:{name:'מטופל לדוגמה'}},container:document.getElementById('preview'),fetchApi,readOnly:false,isCurrent:()=>true,next:()=>document.getElementById('preview').textContent='התרגול הושלם'});
 </script></body></html>`));

@@ -39,10 +39,6 @@
           "key": "confidentiality_request"
         },
         {
-          "type": "form",
-          "key": "demographics"
-        },
-        {
           "type": "chat"
         }
       ]
@@ -60,10 +56,6 @@
           "key": "confidentiality_request"
         },
         {
-          "type": "form",
-          "key": "demographics"
-        },
-        {
           "type": "chat"
         }
       ]
@@ -79,10 +71,6 @@
         {
           "type": "form",
           "key": "confidentiality_request"
-        },
-        {
-          "type": "form",
-          "key": "demographics"
         },
         {
           "type": "chat"
