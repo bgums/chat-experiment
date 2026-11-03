@@ -6,8 +6,7 @@ participants belong to `experiment`.
 ## Run
 
 Requires Node.js 18+ and `npm install`. Set these environment variables in `.env`:
-`OPENAI_API_KEY`, `OPENAI_MODEL` (default `gpt-4.1`), `OPENAI_VECTOR_STORE_ID`,
-`OPENAI_FILE_ID`, `ADMIN_USER`, `ADMIN_PASSWORD`, and optionally `PORT` (default 3000).
+`OPENAI_API_KEY`, `OPENAI_MODEL` (default `gpt-4.1`), `ADMIN_USER`, `ADMIN_PASSWORD`, and optionally `PORT` (default 3000).
 
 Run `npm start`, open `http://localhost:3000/admin`, and create participant links.
 `SQLITE_PATH` optionally selects the database; default: `server/data/experiment.db`.
@@ -33,11 +32,11 @@ column `group_assignment` is renamed to `group`, and `reading_order` is removed.
 
 | File | Purpose |
 | --- | --- |
-| `server/instructions/practice_feedback.txt` | Blank dedicated prompt for initial DP feedback; fill in your instructions |
-| `server/instructions/practice_hint.txt` | Blank dedicated prompt for the DP hint; fill in your instructions |
+| `server/instructions/practice_feedback.txt` | Initial DP feedback instructions |
+| `server/instructions/practice_hint.txt` | Tip instructions; composed with feedback in one model response |
 | `server/instructions/deliberate_practice_selection.txt` | **Dedicated location for your selection prompt**; contains a working draft |
 | `server/instructions/deliberate_practice_evaluation.txt` | Verbal attempt feedback; receives score, successful, strategyComplete and nextAction |
-| `server/instructions/deliberate_practice_score.txt` | Separate score call for the original response and each attempt; copied unchanged from evaluation pending researcher edits |
+| `server/instructions/deliberate_practice_score.txt` | Separate study-adapted quality score for the original response and each attempt |
 | `server/config/deliberatePractice.json` | `maxAttemptsPerStrategy`: **3**; `strategiesPerChat`: **2**; `showScoresToParticipant`: **true** for current testing |
 
 Restart after editing prompts/configuration. The first round snapshots the attempt
@@ -49,7 +48,7 @@ the corresponding prompt files with each research deployment.
 The selector receives the original transcript and the participant's strategy
 history across sessions. It classifies the original repair strategy and proposes
 an alternative with a stable `snake_case` ID, explanation, principles, application
-and application. Separate calls generate feedback and hint using the dedicated prompts. While a prompt is blank, its card displays “הפרומפט טרם הוגדר.” The server validates the selected patient message and copies the
+and application. One call generates feedback and hint using the two dedicated prompts. The server validates the selected patient message and copies the
 excerpt directly from the transcript. A subsequent round in the same conversation
 must use a different strategy. Earlier sessions inform selection without forbidding
 repetition across sessions.
@@ -72,17 +71,16 @@ restore both screens in their original order.
 Each assessment also returns a separate numeric `score`, stored in the database
 and shown at the beginning of feedback while `showScoresToParticipant` is true.
 Set this flag to **false before participant runs**: scores are then removed from
-participant API responses while remaining available to admin/export. The evaluation
-prompt has a dedicated researcher scoring-protocol section. Until a rubric is
-written there, scores are null (shown as “טרם הוגדר בפרוטוקול”); no scale is invented.
-Older assessments remain null. The verbal feedback must not include the score.
+participant API responses while remaining available to admin/export. The study rubric in `server/knowledge/3rs-2022.json`
+defines 1/3/5 quality scores. This is an explicitly adapted DP measure, not the manual's
+salience scale or repair-effectiveness scale. Five is the practice progression threshold.
 
-Patient replies and evaluation use separate model calls. Practice does not modify
-the original conversation. An attempt is saved only after both calls succeed;
+Patient replies and scoring run in parallel; feedback and tip are then generated together. Practice does not modify
+the original conversation. An attempt is saved only after all required calls succeed;
 network retries return an already saved matching attempt. Concurrent requests for
 one patient are guarded in memory: deployment assumes one Node.js server process.
 
-A temporary “התחלה מחדש של האימון” button in practice and its summary deletes this conversation’s practice rounds and attempts and starts fresh from its original transcript. It creates no archive and leaves other conversations intact.
+A temporary “התחלה מחדש של האימון” button in practice deletes this conversation’s practice rounds and attempts and starts fresh from its original transcript. It creates no archive and leaves other conversations intact.
 
 ## Research data
 
@@ -121,11 +119,22 @@ export, reset and balanced allocation. It does not call OpenAI or modify researc
 Before recruitment, review/replace the draft practice prompts and run a pilot
 against the configured real model to assess instructional quality.
 
-## 3RS retrieval in deliberate practice
+## Local 3RS knowledge
 
-Selection, original/attempt scoring, feedback and tips require a file search in
-`OPENAI_VECTOR_STORE_ID`. `OPENAI_FILE_ID` must identify the 3RS manual indexed in
-that store. Each call checks that search returned nonempty text from that file;
-missing retrieval fails the request instead of saving an ungrounded assessment.
-The patient-role rehearsal call remains separate. Tests use simulated retrieval;
-they do not validate the contents or availability of the live vector store.
+`server/knowledge/3rs-2022.json` is a curated, page-referenced digest of the supplied
+2022 manual, with a source PDF hash and a separately labelled study quality rubric.
+`server/utils/practiceKnowledge.js` selects the relevant sections for each role.
+Chat uses rupture definitions/markers; selection uses the marker/strategy catalogue;
+scoring gets its target strategy and the quality rubric; coaching gets the relevant
+strategy definitions. Legacy unrecognized strategy IDs receive the full catalogue.
+There are no runtime PDF searches; `OPENAI_VECTOR_STORE_ID` and `OPENAI_FILE_ID`
+are no longer required. Existing environment values can remain unused.
+
+Initial DP uses three sequential model calls for recognized strategies: selection,
+original score, then feedback + tip. The next strategy needs two calls. Each attempt
+uses three calls in two stages: patient reply + score concurrently, then feedback + tip.
+Prompt and knowledge hashes identify the version. Restart the server and restart
+practice to apply changes to saved plans. Actual latency and coaching quality still
+need a real-model pilot; simulation verifies orchestration, not clinical validity.
+
+See `docs/3rs-knowledge-review.md` for the per-prompt review and source pages.

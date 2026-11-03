@@ -44,6 +44,7 @@ import { ensureSessionPersonas, buildPersonaPrompt, getAllPersonas } from "./uti
 import { nowGmtPlus3Iso } from "./utils/timezone.js";
 import { listPracticeRounds } from "./db.js";
 import { practiceConfig, restartPractice, startPractice, attemptPractice, withPracticeLock, practiceComplete } from "./practice.js";
+import { knowledgeInstructions } from "./utils/practiceKnowledge.js";
 import { participantPracticePayload } from "./utils/practicePresentation.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -51,17 +52,6 @@ const __dirname = path.dirname(__filename);
 
 const PORT = process.env.PORT || 3000;
 const MODEL_ID = process.env.OPENAI_MODEL || "gpt-4.1";
-const VECTOR_STORE_ID = process.env.OPENAI_VECTOR_STORE_ID;
-const FILE_ID = process.env.OPENAI_FILE_ID;
-
-if (!VECTOR_STORE_ID) {
-  throw new Error("OPENAI_VECTOR_STORE_ID is required. Set it in your environment before starting the server.");
-}
-
-if (!FILE_ID) {
-  throw new Error("OPENAI_FILE_ID is required. Set it in your environment before starting the server.");
-}
-
 const chatInstructionsPath = path.join(__dirname, "instructions", "chat_instructions.txt");
 const midChatInstructionsPath = path.join(__dirname, "instructions", "mid_chat_instructions.txt");
 
@@ -186,7 +176,7 @@ async function hasPostChatFormForPersona(session, sessionPersonaId) {
 
 function combineChatPrompt(personaObj, includeMid = false) {
   const personaPrompt = buildPersonaPrompt(personaObj);
-  const parts = [personaPrompt, chatInstructions];
+  const parts = [knowledgeInstructions("patient"), personaPrompt, chatInstructions];
   if (includeMid) parts.push(midChatInstructions);
   return parts.filter(Boolean).join("\n\n---\n\n");
 }
@@ -1253,12 +1243,6 @@ app.post("/api/session/:token/message", async (req, res) => {
       conversation: conversationId,
       instructions,
       max_output_tokens: CHAT_MAX_OUTPUT_TOKENS,
-      tools: [
-        {
-          type: "file_search",
-          vector_store_ids: [VECTOR_STORE_ID]
-        }
-      ],
       input: [
         {
           role: "user",

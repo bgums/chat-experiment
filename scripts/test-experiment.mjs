@@ -9,22 +9,22 @@ import vm from "node:vm";
 import crypto from "node:crypto";
 import { participantPracticePayload } from "../server/utils/practicePresentation.js";
 
-// Verify that an ungrounded response cannot be accepted as a DP assessment.
-const { createPracticeResponse } = await import("../server/utils/practiceKnowledge.js");
-const knowledgeEnv = { OPENAI_VECTOR_STORE_ID: "store", OPENAI_FILE_ID: "manual" };
-const grounded = { output: [{ type: "file_search_call", status: "completed", results: [{ file_id: "manual", text: "Relevant rubric" }] }] };
-const request = { instructions: "Score this attempt", text: { format: { type: "json_schema" } } };
-assert.equal(await createPracticeResponse(request, async payload => {
-  assert.equal(payload.tool_choice, "required");
-  assert.deepEqual(payload.tools, [{ type: "file_search", vector_store_ids: ["store"] }]);
-  assert.deepEqual(payload.include, ["file_search_call.results"]);
-  assert.equal(payload.text, request.text);
-  return grounded;
-}, knowledgeEnv), grounded);
-for (const output of [[], [{ type: "file_search_call", status: "completed", results: [] }], [{ type: "file_search_call", status: "completed", results: [{ file_id: "other", text: "Unrelated" }] }]]) {
-  await assert.rejects(createPracticeResponse(request, async () => ({ output }), knowledgeEnv), /could not be retrieved/);
-}
-await assert.rejects(createPracticeResponse(request, async () => grounded, {}), /requires/);
+// Knowledge is scoped to each role; scoring receives the study rubric, not a PDF search.
+const { createPracticeResponse, knowledgeFor, practiceKnowledge } = await import("../server/utils/practiceKnowledge.js");
+assert.equal(Object.keys(knowledgeFor("practice_selection").strategies).length, 11);
+assert.ok(knowledgeFor("patient").markers);
+assert.ok(!knowledgeFor("patient").practiceRubric);
+const planForKnowledge = { strategyId: "validate_rupture_experience", originalStrategyId: "acknowledge_contribution" };
+const originalKnowledge = knowledgeFor("practice_score", { plan: planForKnowledge, assessmentType: "original" });
+assert.deepEqual(Object.keys(originalKnowledge.strategies), ["acknowledge_contribution"]);
+assert.deepEqual(Object.keys(knowledgeFor("practice_evaluation", { plan: planForKnowledge }).strategies), ["validate_rupture_experience"]);
+assert.equal(originalKnowledge.practiceRubric.version, "dp-quality-v1");
+assert.equal(practiceKnowledge.source.sha256.length, 64);
+await createPracticeResponse({ instructions: "score", input: JSON.stringify({ plan: planForKnowledge }), text: { format: { name: "practice_score" } } }, async payload => {
+  assert.ok(!payload.tools && !payload.tool_choice);
+  assert.match(payload.instructions, /dp-quality-v1/);
+  return {};
+});
 
 const scoredRounds = [{ config: { strategiesPerChat: 2 }, attempts: [{ score: 3, feedback: "משוב" }] }];
 assert.equal(participantPracticePayload({ strategiesPerChat: 1, showScoresToParticipant: true }, scoredRounds, []).rounds[0].attempts[0].score, 3);

@@ -55,26 +55,24 @@ export async function createResponse(payload) {
         const source = data.transcript.find(message => data.eligibleSourceMessageIds.includes(message.id));
         simulatedText = JSON.stringify({
           sourceMessageId: source.id,
-          originalStrategyId: "problem_solving", originalStrategyExplanation: "ניסיון להציע פתרון.",
-          strategyId: data.requiredStrategyId || (data.excludedStrategyIds.includes("validate_emotion") ? "explore_rupture" : "validate_emotion"),
+          originalStrategyId: "illustrate_task_rationale", originalStrategyExplanation: "ניסיון להציע פתרון.",
+          strategyId: data.requiredStrategyId || (data.excludedStrategyIds.includes("validate_rupture_experience") ? "invite_rupture_exploration" : "validate_rupture_experience"),
           title: "תרגול איחוי", explanation: "התייחסות לרגע של קושי בקשר.",
           principles: "הקשבה וסקרנות.", application: "התייחסות לחוויה של המטופל."
         });
+      } else if (formatName === "practice_initial_coaching") {
+        simulatedText = JSON.stringify({ feedback: "משוב פתיחה מדומה", hint: "טיפ פתיחה מדומה" });
       } else if (formatName === "practice_score") {
         const data = JSON.parse(payload.input);
         simulatedText = JSON.stringify({ score: data.therapistMessage.includes("excellent") ? 5 : data.therapistMessage.includes("retry") ? 1 : 3 });
       } else if (formatName === "practice_evaluation") {
         const data = JSON.parse(payload.input);
         simulatedText = JSON.stringify({
-          feedback: "משוב מדומה על התגובה.", summary: "סיכום מדומה של הכיוון שנוסה."
+          feedback: "משוב מדומה על התגובה.", hint: "טיפ מדומה לניסיון", summary: "סיכום מדומה של הכיוון שנוסה."
         });
       }
       return {
         output: [
-          ...(payload.tools?.some(tool => tool.type === "file_search") ? [{
-            type: "file_search_call", status: "completed",
-            results: [{ file_id: process.env.OPENAI_FILE_ID, text: "Simulated manual excerpt for integration tests." }]
-          }] : []),
           {
             content: [{ text: simulatedText }]
           }
