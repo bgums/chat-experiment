@@ -9,6 +9,23 @@ import vm from "node:vm";
 import crypto from "node:crypto";
 import { participantPracticePayload } from "../server/utils/practicePresentation.js";
 
+// Verify that an ungrounded response cannot be accepted as a DP assessment.
+const { createPracticeResponse } = await import("../server/utils/practiceKnowledge.js");
+const knowledgeEnv = { OPENAI_VECTOR_STORE_ID: "store", OPENAI_FILE_ID: "manual" };
+const grounded = { output: [{ type: "file_search_call", status: "completed", results: [{ file_id: "manual", text: "Relevant rubric" }] }] };
+const request = { instructions: "Score this attempt", text: { format: { type: "json_schema" } } };
+assert.equal(await createPracticeResponse(request, async payload => {
+  assert.equal(payload.tool_choice, "required");
+  assert.deepEqual(payload.tools, [{ type: "file_search", vector_store_ids: ["store"] }]);
+  assert.deepEqual(payload.include, ["file_search_call.results"]);
+  assert.equal(payload.text, request.text);
+  return grounded;
+}, knowledgeEnv), grounded);
+for (const output of [[], [{ type: "file_search_call", status: "completed", results: [] }], [{ type: "file_search_call", status: "completed", results: [{ file_id: "other", text: "Unrelated" }] }]]) {
+  await assert.rejects(createPracticeResponse(request, async () => ({ output }), knowledgeEnv), /could not be retrieved/);
+}
+await assert.rejects(createPracticeResponse(request, async () => grounded, {}), /requires/);
+
 const scoredRounds = [{ config: { strategiesPerChat: 2 }, attempts: [{ score: 3, feedback: "משוב" }] }];
 assert.equal(participantPracticePayload({ strategiesPerChat: 1, showScoresToParticipant: true }, scoredRounds, []).rounds[0].attempts[0].score, 3);
 assert.ok(!("score" in participantPracticePayload({ strategiesPerChat: 1, showScoresToParticipant: false }, scoredRounds, []).rounds[0].attempts[0]));
@@ -92,7 +109,8 @@ try {
   assert.equal(session.steps.filter(s => s.type === "practice").length, 2);
   assert.equal(session.steps.some(s => s.type === "module"), false);
   assert.deepEqual(first.steps.filter(s => s.key === "demographics").length, 1);
-  assert.deepEqual(session.steps.slice(0, 2).map(s => s.key), ["consent", "confidentiality_request"]);
+  assert.ok(!session.steps.some(s => ["consent", "confidentiality_request"].includes(s.key)));
+  assert.ok(!first.steps.some(s => ["consent", "confidentiality_request"].includes(s.key)));
   assert.equal(session.steps.some(s => s.key === "demographics"), false);
   for (const meeting of invite.sessions.slice(2)) {
     const overview = await api(`/api/session/${meeting.token}`);
@@ -108,19 +126,22 @@ try {
   await api(`/api/session/${invite.sessions[0].token}/persona/${firstChat.sessionPersonaId}/practice/start`, {}, 403);
   for (const persona of personas) {
     await api(`/api/session/${token}/forms/post_chat`, { sessionPersonaId: persona.sessionPersonaId, responses: {} });
-    for (const [role, content] of [["assistant", "שלום"], ["user", "מה קרה בינינו?"], ["assistant", "אני מרגיש שאתה לא מבין אותי"], ["user", "תגובה מקורית"]]) {
+    for (const [role, content] of [["assistant", "שלום"], ["user", "מה קרה בינינו?"], ["assistant", "אני מרגיש שאתה לא מבין אותי"], ["user", persona === personas[0] ? "תגובה מקורית" : "excellent original"]]) {
       await run("INSERT INTO messages(participant_id, session_number, session_persona_id, role, content) VALUES (?, 2, ?, ?, ?)", [participant.id, persona.sessionPersonaId, role, content]);
     }
     const url = practiceUrl(persona);
     let data = await api(url + "/start", {});
     const initial = data.rounds[0];
     assert.deepEqual(initial.plan.excerpt.map(message => message.role), ["user", "assistant", "user"]);
-    assert.equal(initial.plan.feedback, "הפרומפט טרם הוגדר.");
-    assert.equal(initial.plan.hint, "הפרומפט טרם הוגדר.");
+    assert.ok(initial.plan.feedback);
+    assert.ok(initial.plan.hint);
     assert.equal(initial.plan.excerpt[1].content, "אני מרגיש שאתה לא מבין אותי");
-    assert.equal(initial.plan.excerpt.at(-1).content, "תגובה מקורית");
+    assert.equal(initial.plan.excerpt.at(-1).content, persona === personas[0] ? "תגובה מקורית" : "excellent original");
+    assert.equal(initial.plan.originalScore, persona === personas[0] ? 3 : 5);
+    assert.equal(initial.plan.strategyMode, persona === personas[0] ? "improve_original" : "alternative");
+    assert.equal(initial.plan.strategyId === initial.plan.originalStrategyId, persona === personas[0]);
     assert.equal(data.originalMessages[0].content, "שלום");
-    assert.equal(data.config.strategiesPerChat, 1);
+    assert.equal(data.config.strategiesPerChat, 2);
     // Read-only requests cannot write or call the model.
     await api(url + "/attempt", {}, 403, { "X-Session-View-Only": "1" });
     await api(url + "/attempt", { roundId: initial.id, attemptNumber: 2, message: "test" }, 409);
@@ -137,17 +158,27 @@ try {
     assert.equal(data.rounds[0].attempts.length, 3);
     await api(url + "/attempt", { roundId: initial.id, attemptNumber: 4, message: "retry" }, 409);
     data = await api(url + "/start", {});
-    assert.equal(data.rounds.length, 1);
-    assert.equal((await api(url)).rounds[0].attempts.length, 3);
+    assert.equal(data.rounds.length, 2);
+    const second = data.rounds[1];
+    assert.equal(second.plan.strategyMode, "alternative");
+    assert.notEqual(second.plan.strategyId, initial.plan.strategyId);
+    assert.notEqual(second.plan.strategyId, initial.plan.originalStrategyId);
+    assert.deepEqual(second.plan.excerpt, initial.plan.excerpt);
+    data = await api(url + "/attempt", { roundId: second.id, attemptNumber: 1, message: "excellent response" });
+    assert.equal(data.rounds[1].status, "early_stopped");
+    assert.equal(data.rounds[1].attempts[0].score, 5);
+    assert.ok(data.rounds[1].attempts[0].hint);
+    await api(url + "/attempt", { roundId: second.id, attemptNumber: 2, message: "retry" }, 409);
+    assert.equal((await api(url + "/start", {})).rounds.length, 2);
   }
   // Original dialogue was never polluted by rehearsal.
   assert.equal((await all("SELECT * FROM messages WHERE participant_id = ? AND session_number = 2", [participant.id])).length, 8);
   const details = await api(`/api/admin/participant/${invite.participantCode}/details`);
-  assert.equal(details.practice.length, 2);
+  assert.equal(details.practice.length, 4);
   assert.equal(details.practice[0].group, "experiment");
   const exportedPractice = await api(`/api/admin/participant/${invite.participantCode}/practice/export`);
   assert.equal(exportedPractice.group, "experiment");
-  assert.equal(exportedPractice.rounds.length, 2);
+  assert.equal(exportedPractice.rounds.length, 4);
   assert.equal(exportedPractice.rounds[0].attempts[0].score, 1);
   assert.ok(exportedPractice.rounds[0].attempts[0].evaluation_prompt_hash);
   assert.ok(!(await all("PRAGMA table_info(practice_attempts)")).some(column => column.name === "sufficient"));
@@ -164,6 +195,8 @@ try {
   assert.equal((await api(practiceUrl(personas[1]))).rounds[0].attempts.length, 3);
   await api(restartUrl + "/attempt", { roundId: oldRound.id, attemptNumber: 1, message: "stale" }, 409);
   for (let n = 1; n <= 3; n++) await api(restartUrl + "/attempt", { roundId: restarted.id, attemptNumber: n, message: "תגובה חלופית" });
+  const restartSecond = (await api(restartUrl + "/start", {})).rounds[1];
+  await api(restartUrl + "/attempt", { roundId: restartSecond.id, attemptNumber: 1, message: "excellent response" });
   await api(`/api/session/${token}/complete`, {});
   const csv = await fetch(base + "/api/admin/forms/export", { headers: { Authorization: auth } });
   assert.match(await csv.text(), /"group"/);
@@ -174,7 +207,7 @@ try {
   assert.ok(batch.participants.every(p => p.groupAssignment === "experiment"));
   for (const p of batch.participants) assert.equal(new Set(Object.values(p.sessionGroupMap)).size, 4);
   assert.doesNotMatch(logs, /SQLITE_ERROR|Failed to add|Could not remove/);
-  console.log("PASS: flow, experiment group, practice selection, three attempts regardless of score, legacy flag removal, persistence, ownership, read-only, completion, export, reset, balanced allocation");
+  console.log("PASS: flow, experiment group, practice selection, two strategies, original score routing, score-5 stopping, three-attempt cap, restart, legacy flag removal, persistence, ownership, read-only, completion, export, reset, balanced allocation");
 } finally {
   if (db) await new Promise(resolve => db.close(resolve));
   child.kill();

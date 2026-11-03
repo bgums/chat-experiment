@@ -1055,5 +1055,6 @@ body {
 .practice-current, .practice-history { display: flex; flex-direction: column; gap: 16px; }
 .practice-current { min-height: 55vh; flex-shrink: 0; }
 .practice-history { flex-shrink: 0; }
-.practice-history .muted { margin: 0; }
+.practice-history-button { align-self: center; background: #f4f7fa; color: #647687; border: 1px solid #dbe4ec; }
+.practice-loading { min-height: 220px; display: grid; place-items: center; }
 .practice-score { display: block; margin-bottom: 8px; }

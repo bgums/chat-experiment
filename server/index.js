@@ -137,7 +137,9 @@ function getSessionDefinition(sessionNumber) {
 function getSessionSteps(session) {
   const definition = getSessionDefinition(session.sessionNumber);
   const rawSteps = Array.isArray(definition.steps) ? definition.steps : [{ type: "chat" }];
-  return rawSteps.map((step) => ({ ...step }));
+  return rawSteps
+    .filter(step => loadSessionFlow().showConsentAndConfidentiality !== false || !["consent", "confidentiality_request"].includes(step.key))
+    .map((step) => ({ ...step }));
 }
 
 function shouldIncludeFeedbackForSession(session) {
@@ -330,6 +332,7 @@ async function getSessionLockState(session) {
     participantId: session.participantId,
     sessionNumber: session.sessionNumber
   });
+  if (loadSessionFlow().showConsentAndConfidentiality === false) return { locked: false, reason: null, code: null };
   const consentResponse = forms.find((row) => row.formKey === "consent");
   if (!consentResponse?.createdAt) {
     return { locked: false, reason: null, code: null };

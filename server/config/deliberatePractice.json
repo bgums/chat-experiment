@@ -1,6 +1,6 @@
 {
-  "version": "2",
-  "strategiesPerChat": 1,
+  "version": "3",
+  "strategiesPerChat": 2,
   "showScoresToParticipant": true,
   "maxAttemptsPerStrategy": 3,
   "maxMessageLength": 6000

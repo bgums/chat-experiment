@@ -36,8 +36,9 @@ column `group_assignment` is renamed to `group`, and `reading_order` is removed.
 | `server/instructions/practice_feedback.txt` | Blank dedicated prompt for initial DP feedback; fill in your instructions |
 | `server/instructions/practice_hint.txt` | Blank dedicated prompt for the DP hint; fill in your instructions |
 | `server/instructions/deliberate_practice_selection.txt` | **Dedicated location for your selection prompt**; contains a working draft |
-| `server/instructions/deliberate_practice_evaluation.txt` | Assessment and short feedback for each attempt; contains a working draft |
-| `server/config/deliberatePractice.json` | `maxAttemptsPerStrategy`: **3**; `strategiesPerChat`: **1**; `showScoresToParticipant`: **true** for current testing |
+| `server/instructions/deliberate_practice_evaluation.txt` | Verbal attempt feedback; receives score, successful, strategyComplete and nextAction |
+| `server/instructions/deliberate_practice_score.txt` | Separate score call for the original response and each attempt; copied unchanged from evaluation pending researcher edits |
+| `server/config/deliberatePractice.json` | `maxAttemptsPerStrategy`: **3**; `strategiesPerChat`: **2**; `showScoresToParticipant`: **true** for current testing |
 
 Restart after editing prompts/configuration. The first round snapshots the attempt
 limit and model for that conversation. The current strategy count and score visibility
@@ -57,11 +58,16 @@ The participant sees three original messages in the order
 therapist → patient → therapist, followed by feedback and hint in matching coaching cards. They write a replacement for
 the last therapist response. The original response is excluded from the rehearsal
 model's dialogue context. Every therapist message receives a patient reply and short
-assessment. Dialogue continues until the configured attempt limit, regardless of
-the score or feedback content. A round
-summary leads onward after one strategy. Only three dialogue messages are expanded;
-scrolling up reveals “הצג הודעות קודמות” with “אנחנו ממליצים להתקדם קדימה בתרגול”.
-Clicking expands earlier source dialogue and earlier rehearsal turns/feedback.
+assessment. Each strategy ends at score 5 or after three attempts. Two strategies are practised:
+when the original score is below 5, first improve the original strategy and then try
+an alternative; at 5, try two different alternatives. Both use the same original excerpt.
+After the final feedback and tip, Continue advances to the next session step.
+Only three dialogue messages are expanded. Scrolling up reveals a light, centered
+history button inside the chat.
+
+Consent and confidentiality screens are temporarily hidden. Set
+`showConsentAndConfidentiality` to `true` in `server/config/sessionFlow.json` to
+restore both screens in their original order.
 
 Each assessment also returns a separate numeric `score`, stored in the database
 and shown at the beginning of feedback while `showScoresToParticipant` is true.
@@ -93,11 +99,9 @@ Round status (`active`, `attempt_limit`, or future `early_stopped`) is derived f
 avoiding a second mutable source of truth. Session reset and participant deletion
 also clear associated practice data.
 
-`server/utils/practiceProgress.js` contains the researcher extension point
-`shouldStopPracticeEarly({ attempts, config, plan })`. It currently always returns
-false. Implement a future early-stop rule there; no AI completion flag is requested
-or stored. Startup migration removes the obsolete completion flag column while
-retaining all other attempt data.
+`server/utils/practiceProgress.js` defines strategy routing, the score-5 success rule,
+the attempt cap and the next action passed to coaching. Attempt tips are saved alongside
+feedback. Original scores are saved in the round plan.
 
 Admin participant details contain a **Deliberate Practice** section for each session
 and a JSON download of all rounds/attempts. The authenticated export route is
@@ -116,3 +120,12 @@ export, reset and balanced allocation. It does not call OpenAI or modify researc
 
 Before recruitment, review/replace the draft practice prompts and run a pilot
 against the configured real model to assess instructional quality.
+
+## 3RS retrieval in deliberate practice
+
+Selection, original/attempt scoring, feedback and tips require a file search in
+`OPENAI_VECTOR_STORE_ID`. `OPENAI_FILE_ID` must identify the 3RS manual indexed in
+that store. Each call checks that search returned nonempty text from that file;
+missing retrieval fails the request instead of saving an ungrounded assessment.
+The patient-role rehearsal call remains separate. Tests use simulated retrieval;
+they do not validate the contents or availability of the live vector store.

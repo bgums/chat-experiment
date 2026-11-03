@@ -56,19 +56,25 @@ export async function createResponse(payload) {
         simulatedText = JSON.stringify({
           sourceMessageId: source.id,
           originalStrategyId: "problem_solving", originalStrategyExplanation: "ניסיון להציע פתרון.",
-          strategyId: data.excludedStrategyIds.length ? "explore_rupture" : "validate_emotion",
+          strategyId: data.requiredStrategyId || (data.excludedStrategyIds.includes("validate_emotion") ? "explore_rupture" : "validate_emotion"),
           title: "תרגול איחוי", explanation: "התייחסות לרגע של קושי בקשר.",
           principles: "הקשבה וסקרנות.", application: "התייחסות לחוויה של המטופל."
         });
+      } else if (formatName === "practice_score") {
+        const data = JSON.parse(payload.input);
+        simulatedText = JSON.stringify({ score: data.therapistMessage.includes("excellent") ? 5 : data.therapistMessage.includes("retry") ? 1 : 3 });
       } else if (formatName === "practice_evaluation") {
         const data = JSON.parse(payload.input);
         simulatedText = JSON.stringify({
-          score: data.dialogue.at(-1).content.includes("retry") ? 1 : 3,
           feedback: "משוב מדומה על התגובה.", summary: "סיכום מדומה של הכיוון שנוסה."
         });
       }
       return {
         output: [
+          ...(payload.tools?.some(tool => tool.type === "file_search") ? [{
+            type: "file_search_call", status: "completed",
+            results: [{ file_id: process.env.OPENAI_FILE_ID, text: "Simulated manual excerpt for integration tests." }]
+          }] : []),
           {
             content: [{ text: simulatedText }]
           }

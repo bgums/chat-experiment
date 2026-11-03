@@ -1370,6 +1370,7 @@ if (practiceAttemptColumns.some(column => column.name === "sufficient")) {
 }
 for (const [table, column, definition] of [
   ["practice_attempts", "score", "REAL"],
+  ["practice_attempts", "hint", "TEXT NOT NULL DEFAULT ''"],
   ["participants", "subject_id", "TEXT"],
   ["participants", "schedule_start", "TEXT"],
   ["participants", "notes", "TEXT"],
