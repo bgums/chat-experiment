@@ -62,7 +62,7 @@ export async function renderPractice({ step, container, fetchApi, readOnly, next
   }
   function header() {
     heading("תרגול");
-    card.append(element("p", "כעת נתרגל ניסוח של תגובת המטפל/ת על בסיס קטע מהשיחה. אחרי כל ניסיון תקבלו פידבק ותוכלו לנסות שוב."));
+    card.append(element("p", "כעת נחזור לחלק מן השיחה ונתרגל תגובות אלטרנטיביות למטופל. אנא קראו את הקטע המצורף מן השיחה ועקבו אחר ההנחיות."));
   }
   function loading() {
     if (!isCurrent()) return;
@@ -146,7 +146,7 @@ export async function renderPractice({ step, container, fetchApi, readOnly, next
     }
     if (readOnly) { card.append(element("p", "מצב צפייה בלבד — התרגול טרם הושלם.")); return; }
     const form = element("form", "", "practice-form");
-    const label = element("label", round.attempts.length ? "הניסיון הבא שלך" : "נסחו תגובה חלופית במקום תגובת המטפל/ת המקורית");
+    const label = element("label", "נסחו תגובה חלופית.");
     const input = element("textarea");
     input.id = `practice-message-${round.id}`;
     label.htmlFor = input.id;
