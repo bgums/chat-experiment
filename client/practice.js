@@ -54,10 +54,11 @@ export async function renderPractice({ step, container, fetchApi, readOnly, next
   }
   function coach(text, attempt = null, title = "טיפ") {
     const note = element("aside", "", "practice-coach");
-    if (attempt && data.config.showScoresToParticipant) {
-      note.append(element("strong", `ציון: ${attempt.score ?? "טרם הוגדר בפרוטוקול"}`, "practice-score"));
-    }
-    note.append(element("strong", attempt ? "משוב על הניסיון" : title), formattedMessage(text));
+    if (attempt) {
+      const label = attempt.performanceLabel || { 1: "טעון שיפור", 3: "ביצוע טוב, טעון שיפור", 5: "ביצוע טוב" }[attempt.score];
+      note.append(element("strong", label || "משוב על הניסיון", "practice-score"));
+    } else note.append(element("strong", title));
+    note.append(formattedMessage(text));
     return note;
   }
   function header() {
@@ -72,7 +73,8 @@ export async function renderPractice({ step, container, fetchApi, readOnly, next
     card.append(status);
   }
   async function transition(action) {
-    loading();
+    if (action !== "start") loading();
+    else card.append(element("p", "טוען את האסטרטגיה הבאה…", "practice-transition"));
     try {
       data = await request(action);
       dialogue(data.rounds.at(-1));
@@ -89,21 +91,27 @@ export async function renderPractice({ step, container, fetchApi, readOnly, next
     if (!isCurrent()) return;
     card.replaceChildren();
     header();
-    if (!readOnly) card.append(restartButton());
+    if (!readOnly && data.config.showRestartPractice) card.append(restartButton());
     const chat = element("div", "", "practice-dialogue");
     chat.setAttribute("role", "log");
     chat.setAttribute("aria-label", "שיחת תרגול והכוונה");
-    function message(target, role, content) {
+    function message(target, role, content, isLatestAttempt = false) {
       const node = element("article", "", `message message-${role === "user" ? "user" : "assistant"}`);
+      if (isLatestAttempt) node.dataset.practiceLatestAttempt = "true";
       node.append(element("strong", role === "user" ? "מטפל/ת" : step.persona?.name || "מטופל/ת"), element("p", content));
       target.append(node);
     }
     const firstExcerptIndex = (data.originalMessages || []).findIndex(message => message.id === round.plan.excerpt[0]?.id);
     const earlierOriginal = firstExcerptIndex > 0 ? data.originalMessages.slice(0, firstExcerptIndex) : [];
-    const entries = round.plan.excerpt.map(message => ({ ...message }));
-    entries.push({ coaching: round.plan.feedback, title: "פידבק" }, { coaching: round.plan.hint, title: "טיפ" });
-    for (const attempt of round.attempts) {
-      entries.push({ role: "user", content: attempt.therapist_message }, { coaching: attempt.feedback, attempt }, { coaching: attempt.hint || "הפרומפט טרם הוגדר.", title: "טיפ" });
+    const entries = [];
+    for (const saved of data.rounds) {
+      if (saved.round_number === 1) entries.push(...saved.plan.excerpt.map(message => ({ ...message })));
+      else entries.push({ ...saved.plan.excerpt[1] });
+      entries.push({ coaching: saved.plan.feedback, title: "פידבק" }, { coaching: saved.plan.hint, title: "טיפ" });
+      for (const attempt of saved.attempts) {
+        entries.push({ role: "user", content: attempt.therapist_message, isLatestAttempt: saved.id === round.id && attempt.id === round.attempts.at(-1)?.id }, { coaching: attempt.feedback, attempt }, { coaching: attempt.hint || "הפרומפט טרם הוגדר.", title: "טיפ" });
+        if (saved.config.practiceMode === "continuing" && attempt.patient_message) entries.push({ role: "assistant", content: attempt.patient_message });
+      }
     }
     // Keep exactly the latest three dialogue messages expanded. Coaching is not a message.
     let dialogueCount = 0;
@@ -111,11 +119,14 @@ export async function renderPractice({ step, container, fetchApi, readOnly, next
     for (let index = entries.length - 1; index >= 0; index--) {
       if (entries[index].role && ++dialogueCount === 3) { visibleFrom = index; break; }
     }
+    if (round.round_number > 1 && !round.attempts.length) {
+      visibleFrom = entries.findLastIndex(entry => entry.id === round.plan.excerpt[1].id && entry.role === "assistant");
+    }
     const hiddenEntries = [...earlierOriginal, ...entries.slice(0, visibleFrom)];
     const history = element("div", "", "practice-history");
     const current = element("div", "", "practice-current");
     function drawEntry(target, entry) {
-      if (entry.role) message(target, entry.role, entry.content);
+      if (entry.role) message(target, entry.role, entry.content, entry.isLatestAttempt);
       else target.append(coach(entry.coaching, entry.attempt, entry.title));
     }
     let historyButton;
@@ -134,9 +145,15 @@ export async function renderPractice({ step, container, fetchApi, readOnly, next
     chat.append(current);
     card.append(chat);
     requestAnimationFrame(() => {
-      // The disclosure lives above the initial scroll position and is revealed by scrolling up.
-      if (historyButton) chat.scrollTop = history.offsetHeight + 16;
-      else chat.scrollTop = 0;
+      const latestAttempt = chat.querySelector("[data-practice-latest-attempt]");
+      if (latestAttempt) {
+        chat.scrollTop = Math.max(0, chat.scrollTop + latestAttempt.getBoundingClientRect().top - chat.getBoundingClientRect().top);
+      } else if (historyButton) {
+        // Start at the three-message excerpt; earlier conversation stays behind the disclosure.
+        chat.scrollTop = history.offsetHeight + 16;
+      } else {
+        chat.scrollTop = 0;
+      }
     });
     if (round.status !== "active") {
       if (data.rounds.length < data.config.strategiesPerChat && !readOnly) {
@@ -146,7 +163,7 @@ export async function renderPractice({ step, container, fetchApi, readOnly, next
     }
     if (readOnly) { card.append(element("p", "מצב צפייה בלבד — התרגול טרם הושלם.")); return; }
     const form = element("form", "", "practice-form");
-    const label = element("label", "נסחו תגובה חלופית.");
+    const label = element("label", round.config.practiceMode === "continuing" && round.attempts.at(-1)?.patient_message ? "הגיבו לתגובת המטופל החדשה." : "נסחו תגובה חלופית.");
     const input = element("textarea");
     input.id = `practice-message-${round.id}`;
     label.htmlFor = input.id;

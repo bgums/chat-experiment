@@ -1378,6 +1378,7 @@ for (const [table, column, definition] of [
   ["messages", "conversation_id", "TEXT"],
   ["form_responses", "session_persona_id", "INTEGER"],
   ["sessions", "scheduled_for", "TEXT"],
+  ["sessions", "practice_first_mode", "TEXT"],
   ["sessions", "schedule_lock_disabled", "INTEGER DEFAULT 0"],
   ["sessions", "admin_unlocked", "INTEGER DEFAULT 0"]
 ]) await ensureColumnExists(getDb(), table, column, definition);

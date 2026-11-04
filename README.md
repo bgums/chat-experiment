@@ -136,3 +136,20 @@ practice to apply changes to saved plans. Actual latency and coaching quality st
 need a real-model pilot; simulation verifies orchestration, not clinical validity.
 
 See `docs/3rs-knowledge-review.md` for the per-prompt review and source pages.
+
+## Practice variants
+
+`modePolicy` in `server/config/deliberatePractice.json` is currently `continuing`:
+both patients generate new replies in DP. Saved active fixed rounds switch to continuing
+on their next attempt, starting from the original patient turn if no replies exist yet.
+Historical attempts without patient replies remain intact.
+
+Set `modePolicy` to `counterbalanced` to restore random assignment of fixed/continuing
+across the two patients. Session assignments are retained for that option.
+`showRestartPractice` is false to hide the temporary restart button; set it to true
+to show it again. The restart endpoint remains available.
+
+Attempt feedback displays bold verbal assessments: 1 = טעון שיפור,
+3 = ביצוע טוב, טעון שיפור, 5 = ביצוע טוב. Numeric scores remain in research data
+and drive progression. The verbal label remains available when numeric API scores
+are hidden using `showScoresToParticipant`.

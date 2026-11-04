@@ -31,6 +31,12 @@ assert.equal(participantPracticePayload({ strategiesPerChat: 1, showScoresToPart
 assert.ok(!("score" in participantPracticePayload({ strategiesPerChat: 1, showScoresToParticipant: false }, scoredRounds, []).rounds[0].attempts[0]));
 assert.equal(scoredRounds[0].attempts[0].score, 3); // Redaction never changes research data.
 
+for (const [score, label] of [[1, "טעון שיפור"], [3, "ביצוע טוב, טעון שיפור"], [5, "ביצוע טוב"]]) {
+  const visible = participantPracticePayload({ strategiesPerChat: 1, showScoresToParticipant: false }, [{ config: {}, attempts: [{ score }] }], []).rounds[0].attempts[0];
+  assert.equal(visible.performanceLabel, label);
+  assert.ok(!("score" in visible));
+}
+
 const temp = await mkdtemp(path.join(os.tmpdir(), "repair-experiment-"));
 const dbPath = path.join(temp, "test.db");
 // Start from the previous participant schema to exercise migration as well.
@@ -142,6 +148,8 @@ try {
     assert.equal(initial.plan.strategyId === initial.plan.originalStrategyId, persona === personas[0]);
     assert.equal(data.originalMessages[0].content, "שלום");
     assert.equal(data.config.strategiesPerChat, 2);
+    assert.equal(initial.config.practiceMode, "continuing");
+    assert.equal(data.config.showRestartPractice, false);
     // Read-only requests cannot write or call the model.
     await api(url + "/attempt", {}, 403, { "X-Session-View-Only": "1" });
     await api(url + "/attempt", { roundId: initial.id, attemptNumber: 2, message: "test" }, 409);
@@ -149,8 +157,9 @@ try {
     for (let n = 1; n <= 3; n++) {
       data = await api(url + "/attempt", { roundId: initial.id, attemptNumber: n, message: capped ? "retry" : "אני מבין את הקושי" });
       assert.equal(data.rounds[0].attempts.length, n);
+      assert.equal(Boolean(data.rounds[0].attempts.at(-1).patient_message), initial.config.practiceMode === "continuing");
       assert.equal(data.rounds[0].attempts.at(-1).score, capped ? 1 : 3);
-      assert.ok(!("patient_message" in data.rounds[0].attempts.at(-1)));
+      assert.equal("patient_message" in data.rounds[0].attempts.at(-1), initial.config.practiceMode === "continuing");
       assert.ok(!("sufficient" in data.rounds[0].attempts.at(-1)));
       assert.equal(data.rounds[0].status, n < 3 ? "active" : "attempt_limit");
       if (n < 3) await api(`/api/session/${token}/complete`, {}, 400);
@@ -176,6 +185,8 @@ try {
   assert.equal((await all("SELECT * FROM messages WHERE participant_id = ? AND session_number = 2", [participant.id])).length, 8);
   const details = await api(`/api/admin/participant/${invite.participantCode}/details`);
   assert.equal(details.practice.length, 4);
+  const firstModes = details.practice.filter(round => round.round_number === 1).map(round => round.config.practiceMode);
+  assert.deepEqual(firstModes, ["continuing", "continuing"]);
   assert.equal(details.practice[0].group, "experiment");
   const exportedPractice = await api(`/api/admin/participant/${invite.participantCode}/practice/export`);
   assert.equal(exportedPractice.group, "experiment");
@@ -190,6 +201,7 @@ try {
   await api(restartUrl + "/restart", {}, 403, { "X-Session-View-Only": "1" });
   const restarted = (await api(restartUrl + "/restart", {})).rounds[0];
   assert.notEqual(restarted.id, oldRound.id);
+  assert.equal(restarted.config.practiceMode, oldRound.config.practiceMode);
   assert.equal(restarted.attempts.length, 0);
   assert.equal(restarted.round_number, 1);
   assert.equal((await all("SELECT * FROM practice_attempts WHERE round_id = ?", [oldRound.id])).length, 0);

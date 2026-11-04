@@ -1,14 +1,17 @@
 import fs from "fs";
+import { randomInt } from "node:crypto";
+import { buildPersonaPrompt } from "./utils/personaLoader.js";
 import { createHash } from "crypto";
 import { createResponse } from "./openaiClient.js";
 import { extractTextFromResponse } from "./utils/extractText.js";
-import { listPracticeRounds, practiceRun } from "./db.js";
+import { listPracticeRounds, practiceRun, practiceQuery, getSessionPersonas } from "./db.js";
 import { practiceStrategyMode, practiceFeedbackContext } from "./utils/practiceProgress.js";
-import { createPracticeResponse, practiceKnowledge, knowledgeHash } from "./utils/practiceKnowledge.js";
+import { createPracticeResponse, practiceKnowledge, knowledgeHash, knowledgeInstructions } from "./utils/practiceKnowledge.js";
 import { nowGmtPlus3Iso } from "./utils/timezone.js";
 
 const read = name => fs.readFileSync(new URL(name, import.meta.url), "utf8");
 export const practiceConfig = JSON.parse(read("./config/deliberatePractice.json"));
+if (!["continuing", "counterbalanced"].includes(practiceConfig.modePolicy)) throw new Error("Invalid practice mode policy");
 if (typeof practiceConfig.showScoresToParticipant !== "boolean") throw new Error("Invalid practice score visibility flag");
 for (const key of ["strategiesPerChat", "maxAttemptsPerStrategy", "maxMessageLength"]) {
   if (!Number.isInteger(practiceConfig[key]) || practiceConfig[key] < 1) throw new Error(`Invalid practice config: ${key}`);
@@ -69,6 +72,15 @@ const initialCoachingSchema = {
 const coachingPrompt = (feedbackPrompt) => `${feedbackPrompt}\n\nהוראות לשדה hint:\n${hint}\n\nהחזר אובייקט לפי הסכמה. כתוב תחילה את שדה feedback לפי הוראות הפידבק, ואז את שדה hint לפי הוראות הטיפ ובהתאם לפידבק שכתבת באותה תשובה. אם קיים summary בסכמה, כתוב גם אותו. הוראות להחזיר טקסט בלבד מתייחסות לתוכן השדה המתאים, ולא למבנה הפלט הכולל.`;
 const cleanPlan = ({ feedback, hint, ...plan }) => plan;
 
+async function practiceMode(session, persona) {
+  if (practiceConfig.modePolicy === "continuing") return "continuing";
+  const proposed = randomInt(2) ? "continuing" : "fixed";
+  await practiceRun("UPDATE sessions SET practice_first_mode = ? WHERE id = ? AND practice_first_mode IS NULL", [proposed, session.sessionId]);
+  const [row] = await practiceQuery("SELECT practice_first_mode FROM sessions WHERE id = ?", [session.sessionId]);
+  const personas = await getSessionPersonas(session.sessionId);
+  return personas[0].id === persona.id ? row.practice_first_mode : row.practice_first_mode === "fixed" ? "continuing" : "fixed";
+}
+
 export async function startPractice(session, persona, messages) {
   const history = await listPracticeRounds(session.participantId);
   const rounds = history.filter(r => r.session_persona_id === persona.id);
@@ -79,6 +91,7 @@ export async function startPractice(session, persona, messages) {
   const eligibleSourceMessageIds = first ? [first.plan.sourceMessageId] : transcript.filter((message, index) => message.role === "assistant" && transcript[index - 1]?.role === "user" && transcript[index + 1]?.role === "user").map(message => message.id);
   if (!eligibleSourceMessageIds.length) throw Object.assign(new Error("A therapist–patient–therapist exchange is required for rehearsal."), { status: 400 });
   const config = { ...(last?.config || practiceConfig), strategiesPerChat: practiceConfig.strategiesPerChat, maxAttemptsPerStrategy: practiceConfig.maxAttemptsPerStrategy, promptHash, knowledgeHash, rubricVersion: practiceKnowledge.practiceRubric.version, model: last?.config.model || process.env.OPENAI_MODEL || "gpt-4.1" };
+  config.practiceMode = await practiceMode(session, persona);
   const selectionData = {
     transcript, eligibleSourceMessageIds,
     previousStrategies: history.map(r => ({ strategyId: r.plan.strategyId, session: r.session_number, personaId: r.session_persona_id })),
@@ -139,7 +152,7 @@ export async function startPractice(session, persona, messages) {
   // The original score controls the curriculum, never skips its first exercise.
   context.nextAction = "practice_strategy";
   context.strategyComplete = false;
-  const coaching = await structured(coachingPrompt(feedback), context, initialCoachingSchema, "practice_initial_coaching", config.model);
+  const coaching = await structured(coachingPrompt(rounds.length ? "הצג רק את האסטרטגיה הבאה שב-plan.strategyId: הסבר קצר מהי ומה נתרגל בה. אל תנתח שוב את תגובת המטפל המקורית, אל תסווג אותה ואל תצטט אותה." : feedback), context, initialCoachingSchema, "practice_initial_coaching", config.model);
   plan.feedback = coaching.feedback;
   plan.hint = coaching.hint;
   await practiceRun(`INSERT INTO practice_rounds
@@ -170,19 +183,33 @@ export async function attemptPractice(session, persona, body) {
   if (typeof message !== "string" || !message.trim() || message.length > round.config.maxMessageLength) throw Object.assign(new Error("Invalid practice message."), { status: 400 });
   // Rehearse a replacement for the original therapist response.
   const dialogue = round.plan.replacedTherapistMessageId ? round.plan.excerpt.slice(0, -1) : [...round.plan.excerpt];
-  for (const attempt of round.attempts) dialogue.push({ role: "user", content: attempt.therapist_message });
+  if (practiceConfig.modePolicy === "continuing" && round.config.practiceMode !== "continuing") {
+    round.config = { ...round.config, previousPracticeMode: round.config.practiceMode || "fixed", practiceMode: "continuing" };
+    await practiceRun("UPDATE practice_rounds SET config_json = ? WHERE id = ?", [JSON.stringify(round.config), round.id]);
+  }
+  const continuing = round.config.practiceMode === "continuing";
+  if (continuing) for (const attempt of round.attempts.filter(attempt => attempt.patient_message?.trim())) dialogue.push({ role: "user", content: attempt.therapist_message }, { role: "assistant", content: attempt.patient_message });
   dialogue.push({ role: "user", content: message });
+  const patientRequest = continuing ? createResponse({
+    model: round.config.model,
+    instructions: `${knowledgeInstructions("patient")}\n${buildPersonaPrompt(JSON.parse(persona.personaJson))}\nהמשך לגלם את המטופל בעברית. הגב להודעה האחרונה בלי לתת פידבק או לגלם את המטפל.`,
+    input: dialogue.map(({ role, content }) => ({ role, content })), max_output_tokens: 500
+  }).then(extractTextFromResponse) : Promise.resolve("");
   const scoreRequest = structured(scoring, { plan: cleanPlan(round.plan), dialogue, therapistMessage: message, assessmentType: "attempt" }, scoreSchema, "practice_score", round.config.model);
-  const scoreResult = await scoreRequest;
+  const [scoreResult, patient] = await Promise.all([scoreRequest, patientRequest]);
+  if (continuing && !patient.trim()) throw new Error("Empty patient response.");
   const context = {
-    plan: cleanPlan(round.plan), dialogue, therapistMessage: message,
+    plan: cleanPlan(round.plan), dialogue, therapistMessage: message, patientReply: patient, practiceMode: round.config.practiceMode,
     ...practiceFeedbackContext(scoreResult.score, body.attemptNumber, { ...round.config, strategiesPerChat: practiceConfig.strategiesPerChat }, round.round_number)
   };
   const result = await structured(coachingPrompt(evaluation), context, evaluationSchema, "practice_evaluation", round.config.model);
+  const attemptFeedback = scoreResult.score === 5
+    ? `כל הכבוד - יישמת את האסטרטגיה בצורה טובה. ${result.feedback}`
+    : result.feedback;
   // One SQL statement commits the complete attempt; status is derived from it below.
   await practiceRun(`INSERT INTO practice_attempts
     (round_id, attempt_number, therapist_message, patient_message, feedback, summary, score, hint, evaluation_prompt_hash, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [round.id, body.attemptNumber, message, "", result.feedback, result.summary, scoreResult.score, result.hint, promptHash, nowGmtPlus3Iso()]);
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [round.id, body.attemptNumber, message, patient, attemptFeedback, result.summary, scoreResult.score, result.hint, promptHash, nowGmtPlus3Iso()]);
   return listPracticeRounds(session.participantId, persona.id);
 }
 

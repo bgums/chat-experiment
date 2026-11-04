@@ -3,5 +3,7 @@
   "strategiesPerChat": 2,
   "showScoresToParticipant": true,
   "maxAttemptsPerStrategy": 3,
-  "maxMessageLength": 6000
+  "maxMessageLength": 6000,
+  "modePolicy": "continuing",
+  "showRestartPractice": false
 }
