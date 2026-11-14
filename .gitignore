@@ -2,3 +2,5 @@ node_modules/
 .env
 server/data/experiment.db
 server/data/clinic-rehearsal.db
+server/data/practice-lab.db
+server/data/clinic-rehearsal-2026-11-04.db

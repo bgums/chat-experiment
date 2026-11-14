@@ -229,13 +229,13 @@ function buildSessionGroupPlan({ allPersonas, participantSeed, participantSessio
     .filter((n) => Number.isFinite(n))
     .sort((a, b) => a - b);
 
-  const targetSessionNumbers = sessionNumbers;
+  const targetSessionNumbers = groupAssignment === "control" ? sessionNumbers.filter(n => n === 1 || n === 4) : sessionNumbers;
 
   if (!targetSessionNumbers.length) {
     return new Map();
   }
 
-  const selectedGroupKeys = allGroupKeys;
+  const selectedGroupKeys = groupAssignment === "control" ? allGroupKeys.slice(0, Math.floor(allGroupKeys.length / 2)) : allGroupKeys;
 
   const plan = new Map(targetSessionNumbers.map((sessionNum) => [sessionNum, []]));
   selectedGroupKeys.forEach((groupKey, idx) => {

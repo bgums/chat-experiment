@@ -1,7 +1,6 @@
 # Alliance rupture repair experiment
 
-Four separate Hebrew sessions with two AI patient conversations each. All new
-participants belong to `experiment`.
+Four separate Hebrew sessions with two AI patient conversations each. Participants belong to `experiment` or `control`.
 
 ## Run
 
@@ -22,10 +21,12 @@ an eight-minute chat, the existing post-chat questionnaire,
 and deliberate practice with inline feedback and hint messages after both conversations in every session.
 Each meeting ends with completion; session 4 shows the final study thank-you.
 
-Control allocation, reading-order logic, associated modules and obsolete checks
-have been removed. Existing control participant records remain an inactive research
-archive. Existing `experimental` assignments migrate to `experiment`; the database
-column `group_assignment` is renamed to `group`, and `reading_order` is removed.
+Select Experiment or Control when creating an individual invite. Balanced batches
+remain experiment-only. Control participants follow the original protocol: chats in
+sessions 1 and 4, and withdrawal/confrontation modules in sessions 2 and 3 in a
+randomized order saved as reading_order. Control does not receive deliberate practice.
+Existing group labels and saved reading orders are preserved (legacy experimental
+is normalized to experiment). Missing control reading orders are assigned on migration.
 
 ## Researcher editing points
 

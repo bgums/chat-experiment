@@ -803,7 +803,7 @@ createParticipantForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
   setManagementMessage("יוצר משתתף חדש...");
   try {
-    const groupAssignment = "experiment";
+    const groupAssignment = groupSelect?.value || "experiment";
     const response = await fetch("/api/admin/invite", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

@@ -114,9 +114,9 @@ function loadSessionFlow() {
   }
 }
 
-function getSessionDefinition(sessionNumber) {
+function getSessionDefinition(sessionNumber, groupAssignment) {
   const flow = loadSessionFlow();
-  const sessions = flow.sessions || [];
+  const sessions = (groupAssignment === "control" ? flow.controlSessions : flow.sessions) || [];
   const match = sessions.find((session) => Number(session.session) === Number(sessionNumber));
   if (match) {
     return match;
@@ -125,11 +125,15 @@ function getSessionDefinition(sessionNumber) {
 }
 
 function getSessionSteps(session) {
-  const definition = getSessionDefinition(session.sessionNumber);
+  const definition = getSessionDefinition(session.sessionNumber, session.groupAssignment);
   const rawSteps = Array.isArray(definition.steps) ? definition.steps : [{ type: "chat" }];
   return rawSteps
-    .filter(step => loadSessionFlow().showConsentAndConfidentiality !== false || !["consent", "confidentiality_request"].includes(step.key))
-    .map((step) => ({ ...step }));
+    .map(step => {
+      if (step.keySource !== "reading_order") return { ...step };
+      const withdrawalFirst = session.readingOrder !== "confrontation_first";
+      const half = withdrawalFirst === (step.moduleOrder === 1) ? "withdrawal" : "confrontation";
+      return { type: "module", key: step.moduleByHalf[half] };
+    });
 }
 
 function shouldIncludeFeedbackForSession(session) {
@@ -258,7 +262,7 @@ async function maybeMarkSessionCompleted(session) {
   );
 
   if (!completionConfirmed) return false;
-  if (!await practiceComplete(session, await getSessionPersonas(session.sessionId))) return false;
+  if (shouldIncludeFeedbackForSession(session) && !await practiceComplete(session, await getSessionPersonas(session.sessionId))) return false;
 
   await markSessionCompleted(session.sessionId);
   const sessions = await listSessionsByParticipant(session.participantId);
@@ -270,9 +274,6 @@ async function maybeMarkSessionCompleted(session) {
 async function getSessionLockState(session) {
   if (!session) {
     return { locked: false, reason: null, code: null };
-  }
-  if (session.groupAssignment !== "experiment") {
-    return { locked: true, reason: "Historical protocol: read-only archive.", code: "historical_protocol" };
   }
 
   // Admin override: if session is admin-unlocked, ignore all lock conditions
@@ -335,7 +336,7 @@ async function enforceLockedSessionAdmin(req, res, next) {
     if (!lockState.locked) return next();
 
     const unlockRequested = String(req.headers["x-session-unlock"] || "") === "1";
-    if (refreshed?.groupAssignment === "experiment" && isAdminAuthorized(req) && unlockRequested) return next();
+    if (isAdminAuthorized(req) && unlockRequested) return next();
 
     const isSessionOverviewRoute = req.method === "GET" && (req.path === "/" || req.path === "");
     if (isSessionOverviewRoute) return next();
@@ -531,8 +532,8 @@ app.use("/api/admin", adminAuth);
 
 app.post("/api/admin/invite", async (req, res) => {
   try {
-    const groupAssignment = "experiment";
-    const invite = await createInvite();
+    const groupAssignment = req.body?.groupAssignment === "control" ? "control" : "experiment";
+    const invite = await createInvite({ groupAssignment });
 
     const participantSessions = await listSessionsByParticipant(invite.participantId);
     for (const participantSession of participantSessions) {
@@ -627,7 +628,7 @@ app.post("/api/admin/invite-balanced-batch", async (req, res) => {
 app.get("/api/admin/session-options", (_req, res) => {
   try {
     res.json({
-      groups: [{ key: "experiment", label: "Experiment" }]
+      groups: [{ key: "experiment", label: "Experiment" }, { key: "control", label: "Control" }]
     });
   } catch (error) {
     console.error("Failed to load session options", error);
@@ -651,7 +652,6 @@ app.get("/api/admin/participants", async (_req, res) => {
     const firstPass = await listParticipants();
 
     for (const participant of firstPass) {
-      if (participant.groupAssignment !== "experiment") continue;
       const sessions = participant.sessions || [];
       for (const session of sessions) {
         if (!session?.sessionId) continue;
@@ -840,7 +840,7 @@ app.get("/api/admin/problems/lock-disabled-sessions", async (_req, res) => {
 app.get("/api/admin/qa/persona-distribution", async (req, res) => {
   try {
     const group = req.query?.group ? String(req.query.group) : "all";
-    const groupAssignment = group === "experiment" ? group : undefined;
+    const groupAssignment = ["experiment", "control"].includes(group) ? group : undefined;
     const rows = await listPersonaSessionDistribution({ groupAssignment });
 
     const sessionPerPersona = {};
@@ -965,7 +965,7 @@ app.get("/api/session/:token", async (req, res) => {
 
     const lockState = req.sessionLockState || await getSessionLockState(session);
     const unlockRequested = String(req.headers["x-session-unlock"] || "") === "1";
-    if (lockState.locked && !(session.groupAssignment === "experiment" && isAdminAuthorized(req) && unlockRequested)) {
+    if (lockState.locked && !(isAdminAuthorized(req) && unlockRequested)) {
       return res.json({
         locked: true,
         lockState,
@@ -976,7 +976,7 @@ app.get("/api/session/:token", async (req, res) => {
       });
     }
 
-    const definition = getSessionDefinition(session.sessionNumber);
+    const definition = getSessionDefinition(session.sessionNumber, session.groupAssignment);
     const configuredSteps = getSessionSteps(session);
     const hasChatSteps = configuredSteps.some((step) => step.type === "chat");
 
@@ -1385,7 +1385,7 @@ app.post("/api/session/:token/complete", async (req, res) => {
       return res.status(404).json({ error: "Session not found." });
     }
 
-    if (!await practiceComplete(session, await getSessionPersonas(session.sessionId))) {
+    if (shouldIncludeFeedbackForSession(session) && !await practiceComplete(session, await getSessionPersonas(session.sessionId))) {
       return res.status(400).json({ error: "Complete deliberate practice before ending the session." });
     }
     await saveFormResponse({

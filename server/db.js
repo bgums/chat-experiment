@@ -248,7 +248,9 @@ function getDb() {
   return dbInstance;
 }
 
-export function createInvite() {
+export function createInvite({ groupAssignment = "experiment" } = {}) {
+  const group = groupAssignment === "control" ? "control" : "experiment";
+  const readingOrder = group === "control" ? (Math.random() < 0.5 ? "withdrawal_first" : "confrontation_first") : null;
   const db = getDb();
   const participantCode = randomUUID();
   const totalSessions = 4;
@@ -256,8 +258,8 @@ export function createInvite() {
 
   return new Promise((resolve, reject) => {
     db.run(
-      "INSERT INTO participants (participant_code, total_sessions, [group], created_at) VALUES (?, ?, ?, ?)",
-      [participantCode, totalSessions, "experiment", createdAt],
+      "INSERT INTO participants (participant_code, total_sessions, [group], reading_order, created_at) VALUES (?, ?, ?, ?, ?)",
+      [participantCode, totalSessions, group, readingOrder, createdAt],
       function insertParticipant(err) {
         if (err) return reject(err);
 
@@ -456,7 +458,7 @@ export function getSessionByToken(sessionToken) {
   const query = `
     SELECT s.id AS session_id, s.session_number, s.status AS session_status, s.conversation_id,
           s.scheduled_for, s.schedule_lock_disabled, s.admin_unlocked, s.started_at, s.completed_at, p.id AS participant_id, p.participant_code, p.total_sessions, p.status AS participant_status,
-          p.[group]
+          p.[group], p.reading_order
     FROM sessions s
     JOIN participants p ON p.id = s.participant_id
     WHERE s.session_token = ?
@@ -483,6 +485,7 @@ export function getSessionByToken(sessionToken) {
         participantStatus: row.participant_status,
         totalSessions: row.total_sessions,
         groupAssignment: row.group,
+        readingOrder: row.reading_order,
       });
     });
   });
@@ -966,7 +969,7 @@ export function listPersonaSessionDistribution({ groupAssignment } = {}) {
   const db = getDb();
   const params = [];
   const where = [];
-  if (groupAssignment === "experiment") {
+  if (["experiment", "control"].includes(groupAssignment)) {
     where.push("p.[group] = ?");
     params.push(groupAssignment);
   }
@@ -1387,9 +1390,8 @@ if (participantColumns.some(column => column.name === "group_assignment")) {
   await practiceRun('ALTER TABLE participants RENAME COLUMN group_assignment TO "group"');
 }
 await ensureColumnExists(getDb(), "participants", "group", "TEXT NOT NULL DEFAULT 'experiment'");
-if (participantColumns.some(column => column.name === "reading_order")) {
-  await practiceRun("ALTER TABLE participants DROP COLUMN reading_order");
-}
+await ensureColumnExists(getDb(), "participants", "reading_order", "TEXT");
+await practiceRun(`UPDATE participants SET reading_order = CASE WHEN (random() & 1) = 0 THEN 'withdrawal_first' ELSE 'confrontation_first' END WHERE [group] = 'control' AND reading_order IS NULL`);
 await practiceRun('UPDATE participants SET "group" = ? WHERE "group" = ?', ["experiment", "experimental"]);
 for (const participant of await practiceQuery("SELECT id, schedule_start FROM participants")) {
   await syncSessionSchedulesForParticipant(getDb(), participant.id, participant.schedule_start);

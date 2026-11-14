@@ -47,6 +47,7 @@ await new Promise((resolve, reject) => legacy.exec(`CREATE TABLE participants (
   total_sessions INTEGER DEFAULT 4, created_at TEXT DEFAULT CURRENT_TIMESTAMP, status TEXT DEFAULT 'invited'
 );
 INSERT INTO participants(participant_code, group_assignment) VALUES ('legacy-experiment','experimental'), ('legacy-control','control');
+UPDATE participants SET reading_order = 'confrontation_first' WHERE participant_code = 'legacy-control';
 CREATE TABLE practice_attempts (
   id INTEGER PRIMARY KEY AUTOINCREMENT, round_id INTEGER NOT NULL,
   attempt_number INTEGER NOT NULL, therapist_message TEXT NOT NULL,
@@ -81,7 +82,22 @@ try {
   }
   assert.match(logs, /Server listening/);
   db = new sqlite3.Database(dbPath);
-  const invite = await api("/api/admin/invite", { groupAssignment: "control" });
+  const control = await api("/api/admin/invite", { groupAssignment: "control" });
+  assert.equal(control.groupAssignment, "control");
+  const reading = [];
+  for (const { sessionNumber, token } of control.sessions) {
+    const flow = await api(`/api/session/${token}`);
+    assert.deepEqual(flow.steps.slice(0, 2).map(step => step.key), ["consent", "confidentiality_request"]);
+    assert.ok(!flow.steps.some(step => ["practice", "feedback"].includes(step.type)));
+    if ([2, 3].includes(sessionNumber)) {
+      assert.ok(!flow.steps.some(step => step.type === "chat"));
+      reading.push(flow.steps.filter(step => step.type === "module").at(-1).key);
+    } else assert.ok(flow.steps.some(step => step.type === "chat"));
+  }
+  await api(`/api/session/${control.sessions[1].token}/complete`, {});
+  assert.equal((await all("SELECT reading_order FROM participants WHERE participant_code = 'legacy-control'"))[0].reading_order, "confrontation_first");
+  assert.deepEqual(reading.sort(), ["confrontation_module", "withdrawal_module"]);
+  const invite = await api("/api/admin/invite", { groupAssignment: "experiment" });
   assert.equal(invite.groupAssignment, "experiment");
   assert.equal(invite.sessions.length, 4);
   // Compare exact seeded assignments against the experiment arm in main-experiment.
@@ -101,9 +117,9 @@ try {
   assert.equal((await all('SELECT "group" FROM participants WHERE participant_code = ?', [invite.participantCode]))[0].group, "experiment");
   assert.equal((await all('SELECT "group" FROM participants WHERE participant_code = ?', ['legacy-experiment']))[0].group, "experiment");
   assert.equal((await all('SELECT "group" FROM participants WHERE participant_code = ?', ['legacy-control']))[0].group, "control");
-  assert.ok(!(await all('PRAGMA table_info(participants)')).some(column => ["group_assignment", "reading_order"].includes(column.name)));
+  assert.ok(!(await all('PRAGMA table_info(participants)')).some(column => column.name === "group_assignment"));
   const options = await api("/api/admin/session-options");
-  assert.deepEqual(options.groups.map(g => g.key), ["experiment"]);
+  assert.deepEqual(options.groups.map(g => g.key), ["experiment", "control"]);
   const first = await api(`/api/session/${invite.sessions[0].token}`);
   assert.equal(first.steps.filter(s => s.type === "chat").length, 2);
   assert.equal(first.steps.filter(s => s.type === "practice").length, 2);
@@ -115,8 +131,8 @@ try {
   assert.equal(session.steps.filter(s => s.type === "practice").length, 2);
   assert.equal(session.steps.some(s => s.type === "module"), false);
   assert.deepEqual(first.steps.filter(s => s.key === "demographics").length, 1);
-  assert.ok(!session.steps.some(s => ["consent", "confidentiality_request"].includes(s.key)));
-  assert.ok(!first.steps.some(s => ["consent", "confidentiality_request"].includes(s.key)));
+  assert.deepEqual(session.steps.slice(0, 2).map(s => s.key), ["consent", "confidentiality_request"]);
+  assert.deepEqual(first.steps.slice(0, 2).map(s => s.key), ["consent", "confidentiality_request"]);
   assert.equal(session.steps.some(s => s.key === "demographics"), false);
   for (const meeting of invite.sessions.slice(2)) {
     const overview = await api(`/api/session/${meeting.token}`);
