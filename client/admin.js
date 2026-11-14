@@ -28,6 +28,7 @@ const messageSessionFilter = document.getElementById("message-session-filter");
 const participantSessionDetails = document.getElementById("participant-session-details");
 
 let participants = [];
+const exportSessionsButton = document.getElementById("export-sessions-csv");
 let chartInstances = [];
 let currentParticipantDetails = null;
 const _saveTimers = new Map();
@@ -201,7 +202,16 @@ function setManagementMessage(text, isError = false, allowHtml = false) {
   }
 }
 
+function getSessionScheduledTime(participant, session) {
+  return formatDateTime(
+    session.scheduledFor || computeSessionScheduledFor(participant.scheduleStart, session.sessionNumber)
+  );
+}
+
 function renderSubjectsPanel() {
+  if (exportSessionsButton) {
+    exportSessionsButton.disabled = !participants.some((participant) => participant.sessions?.length);
+  }
   if (!subjectsPanel) return;
   if (!participants.length) {
     subjectsPanel.innerHTML = "<div class='small-muted'>אין משתתפים להצגה.</div>";
@@ -215,9 +225,7 @@ function renderSubjectsPanel() {
       const status = computeStatus(session);
       const personaDisplay = session.personaNames ? normalizePersonaNames(session.personaNames) : "-";
 
-      const scheduledForSession = formatDateTime(
-        session.scheduledFor || computeSessionScheduledFor(participant.scheduleStart, session.sessionNumber)
-      );
+      const scheduledForSession = getSessionScheduledTime(participant, session);
 
       rows.push(`
         <tr>
@@ -306,6 +314,26 @@ function buildSessionEmail(participant, session) {
 
   return body;
 }
+
+exportSessionsButton?.addEventListener("click", () => {
+  const rows = participants.flatMap((participant) => {
+    const sessions = (participant.sessions || []).slice().sort((a, b) => a.sessionNumber - b.sessionNumber);
+    return sessions.map((session) => [
+      participant.subjectId ?? "",
+      getSessionScheduledTime(participant, session),
+      buildSessionEmail(participant, session)
+    ]);
+  });
+  const csv = ["subject_id,Scheduled_Time,email_content", ...rows.map((row) => (
+    row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(",")
+  ))].join("\r\n");
+  const url = URL.createObjectURL(new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "session-emails.csv";
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+});
 
 function renderProblemsPanel(incompleteRows, lockDisabledRows) {
   if (!problemsPanel) return;
