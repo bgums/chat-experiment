@@ -407,7 +407,7 @@ app.post("/api/session/:token/persona/:sessionPersonaId/practice/:action", async
     const { session, persona } = await practiceContext(req);
     if (!await hasPostChatFormForPersona(session, persona.id)) return res.status(400).json({ error: "Complete post-chat first." });
     const messages = await listMessagesBySessionPersona(persona.id);
-    const rounds = await withPracticeLock(persona.id, async () => {
+    const rounds = await withPracticeLock(session.participantId, async () => {
       if (req.params.action === "restart") return restartPractice(session, persona, messages);
       if (req.params.action === "start") return startPractice(session, persona, messages);
       if (req.params.action === "attempt") return attemptPractice(session, persona, req.body || {});

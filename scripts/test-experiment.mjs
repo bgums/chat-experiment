@@ -8,6 +8,23 @@ import { execFileSync } from "node:child_process";
 import vm from "node:vm";
 import crypto from "node:crypto";
 import { participantPracticePayload } from "../server/utils/practicePresentation.js";
+import { alternativeStrategyGroups, preferredUnpracticedStrategies } from "../server/utils/practiceCurriculum.js";
+
+const curriculumRound = (sessionNumber, personaId, roundNumber, strategyId) => ({
+  session_id: sessionNumber, session_number: sessionNumber, session_persona_id: personaId,
+  round_number: roundNumber, attempts: [{}], plan: { originalStrategyId: "illustrate_task_rationale", strategyId }
+});
+const curriculumFirst = curriculumRound(2, 1, 1, "illustrate_task_rationale");
+const previousCoverage = [
+  curriculumRound(1, 1, 1, "illustrate_task_rationale"),
+  curriculumRound(1, 1, 2, "disclose_rupture_experience"),
+  curriculumRound(1, 2, 2, "acknowledge_contribution")
+];
+assert.deepEqual(Object.keys(alternativeStrategyGroups([...previousCoverage, curriculumFirst], curriculumFirst)), ["link_to_patterns"]);
+const preferredIds = ["disclose_rupture_experience", "acknowledge_contribution"];
+assert.deepEqual(preferredUnpracticedStrategies(preferredIds, []), preferredIds);
+assert.deepEqual(preferredUnpracticedStrategies(preferredIds, previousCoverage.slice(0, 2)), ["acknowledge_contribution"]);
+assert.deepEqual(preferredUnpracticedStrategies(preferredIds, previousCoverage), []);
 
 // Knowledge is scoped to each role; scoring receives the study rubric, not a PDF search.
 const { createPracticeResponse, knowledgeFor, practiceKnowledge } = await import("../server/utils/practiceKnowledge.js");
@@ -161,8 +178,8 @@ try {
     assert.equal(initial.plan.excerpt[1].content, "אני מרגיש שאתה לא מבין אותי");
     assert.equal(initial.plan.excerpt.at(-1).content, persona === personas[0] ? "תגובה מקורית" : "excellent original");
     assert.equal(initial.plan.originalScore, persona === personas[0] ? 3 : 5);
-    assert.equal(initial.plan.strategyMode, persona === personas[0] ? "improve_original" : "alternative");
-    assert.equal(initial.plan.strategyId === initial.plan.originalStrategyId, persona === personas[0]);
+    assert.equal(initial.plan.strategyMode, "improve_original");
+    assert.equal(initial.plan.strategyId, initial.plan.originalStrategyId);
     assert.equal(data.originalMessages[0].content, "שלום");
     assert.equal(data.config.strategiesPerChat, 2);
     assert.equal(initial.config.practiceMode, "continuing");
@@ -174,7 +191,7 @@ try {
     for (let n = 1; n <= 3; n++) {
       data = await api(url + "/attempt", { roundId: initial.id, attemptNumber: n, message: capped ? "retry" : "אני מבין את הקושי" });
       assert.equal(data.rounds[0].attempts.length, n);
-      assert.equal(Boolean(data.rounds[0].attempts.at(-1).patient_message), initial.config.practiceMode === "continuing");
+      assert.equal(Boolean(data.rounds[0].attempts.at(-1).patient_message), initial.config.practiceMode === "continuing" && n < 3);
       assert.equal(data.rounds[0].attempts.at(-1).score, capped ? 1 : 3);
       assert.equal("patient_message" in data.rounds[0].attempts.at(-1), initial.config.practiceMode === "continuing");
       assert.ok(!("sufficient" in data.rounds[0].attempts.at(-1)));
@@ -192,16 +209,24 @@ try {
     assert.notEqual(second.plan.strategyId, initial.plan.originalStrategyId);
     assert.deepEqual(second.plan.excerpt, initial.plan.excerpt);
     data = await api(url + "/attempt", { roundId: second.id, attemptNumber: 1, message: "excellent response" });
-    assert.equal(data.rounds[1].status, "early_stopped");
+    assert.equal(data.rounds[1].status, "active");
     assert.equal(data.rounds[1].attempts[0].score, 5);
     assert.ok(data.rounds[1].attempts[0].hint);
-    await api(url + "/attempt", { roundId: second.id, attemptNumber: 2, message: "retry" }, 409);
+    data = await api(url + "/attempt", { roundId: second.id, attemptNumber: 2, message: "excellent response" });
+    assert.equal(data.rounds[1].status, "active");
+    data = await api(url + "/attempt", { roundId: second.id, attemptNumber: 3, message: "excellent response" });
+    assert.equal(data.rounds[1].status, "attempt_limit");
     assert.equal((await api(url + "/start", {})).rounds.length, 2);
   }
   // Original dialogue was never polluted by rehearsal.
   assert.equal((await all("SELECT * FROM messages WHERE participant_id = ? AND session_number = 2", [participant.id])).length, 8);
   const details = await api(`/api/admin/participant/${invite.participantCode}/details`);
   assert.equal(details.practice.length, 4);
+  const categories = details.practice.map(round => round.plan.strategyCategory);
+  assert.equal(new Set(categories).size, 3);
+  const alternatives = details.practice.filter(round => round.round_number === 2);
+  assert.notEqual(alternatives[0].plan.strategyCategory, alternatives[1].plan.strategyCategory);
+  for (const round of alternatives) assert.notEqual(round.plan.strategyCategory, round.plan.originalStrategyCategory);
   const firstModes = details.practice.filter(round => round.round_number === 1).map(round => round.config.practiceMode);
   assert.deepEqual(firstModes, ["continuing", "continuing"]);
   assert.equal(details.practice[0].group, "experiment");
@@ -235,7 +260,9 @@ try {
   await api(restartUrl + "/attempt", { roundId: oldRound.id, attemptNumber: 1, message: "stale" }, 409);
   for (let n = 1; n <= 3; n++) await api(restartUrl + "/attempt", { roundId: restarted.id, attemptNumber: n, message: "תגובה חלופית" });
   const restartSecond = (await api(restartUrl + "/start", {})).rounds[1];
-  await api(restartUrl + "/attempt", { roundId: restartSecond.id, attemptNumber: 1, message: "excellent response" });
+  for (let n = 1; n <= 3; n++) {
+    await api(restartUrl + "/attempt", { roundId: restartSecond.id, attemptNumber: n, message: "excellent response" });
+  }
   await api(`/api/session/${token}/complete`, {});
   const csv = await fetch(base + "/api/admin/forms/export", { headers: { Authorization: auth } });
   assert.match(await csv.text(), /"group"/);
@@ -246,7 +273,7 @@ try {
   assert.ok(batch.participants.every(p => p.groupAssignment === "experiment"));
   for (const p of batch.participants) assert.equal(new Set(Object.values(p.sessionGroupMap)).size, 4);
   assert.doesNotMatch(logs, /SQLITE_ERROR|Failed to add|Could not remove/);
-  console.log("PASS: flow, experiment group, practice selection, two strategies, original score routing, score-5 stopping, three-attempt cap, restart, legacy flag removal, persistence, ownership, read-only, completion, export, reset, balanced allocation");
+  console.log("PASS: flow, experiment group, practice selection, two strategies, original practice and category coverage, continued practice after score 5, three-attempt cap, restart, legacy flag removal, persistence, ownership, read-only, completion, export, reset, balanced allocation");
 } finally {
   if (db) await new Promise(resolve => db.close(resolve));
   child.kill();

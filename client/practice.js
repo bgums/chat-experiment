@@ -55,10 +55,7 @@ export async function renderPractice({ step, container, fetchApi, readOnly, next
   }
   function coach(text, attempt = null, title = "טיפ") {
     const note = element("aside", "", "practice-coach");
-    if (attempt) {
-      const label = attempt.performanceLabel || { 1: "טעון שיפור", 3: "ביצוע טוב, טעון שיפור", 5: "ביצוע טוב" }[attempt.score];
-      note.append(element("strong", label || "משוב על הניסיון", "practice-score"));
-    } else note.append(element("strong", title));
+    if (!attempt) note.append(element("strong", title));
     note.append(formattedMessage(text));
     return note;
   }
@@ -119,11 +116,14 @@ export async function renderPractice({ step, container, fetchApi, readOnly, next
     const entries = [];
     for (const saved of rounds.slice(0, rounds.indexOf(round) + 1)) {
       if (saved.round_number === 1) entries.push(...saved.plan.excerpt.map(message => ({ ...message })));
-      else entries.push({ ...saved.plan.excerpt[1] });
+      else entries.push(...saved.plan.excerpt.slice(1).map(message => ({ ...message })));
       entries.push({ coaching: saved.plan.feedback, title: "פידבק" }, { coaching: saved.plan.hint, title: "טיפ" });
       for (const attempt of saved.attempts) {
-        entries.push({ role: "user", content: attempt.therapist_message, isLatestAttempt: saved.id === round.id && attempt.id === round.attempts.at(-1)?.id }, { coaching: attempt.feedback, attempt }, { coaching: attempt.hint || "הפרומפט טרם הוגדר.", title: "טיפ" });
-        if (saved.config.practiceMode === "continuing" && attempt.patient_message) entries.push({ role: "assistant", content: attempt.patient_message });
+        entries.push({ role: "user", content: attempt.therapist_message, isLatestAttempt: saved.id === round.id && attempt.id === round.attempts.at(-1)?.id }, { coaching: attempt.feedback, attempt });
+        if (saved.config.practiceMode === "continuing" && attempt.attempt_number < saved.config.maxAttemptsPerStrategy && attempt.patient_message) {
+          entries.push({ role: "assistant", content: attempt.patient_message });
+        }
+        entries.push({ coaching: attempt.hint || "הפרומפט טרם הוגדר.", title: "טיפ" });
       }
     }
     // Keep exactly the latest three dialogue messages expanded. Coaching is not a message.
@@ -169,11 +169,11 @@ export async function renderPractice({ step, container, fetchApi, readOnly, next
       }
     });
     if (reviewingStrategy) {
-      card.append(button("חזרה לאסטרטגיה השנייה", () => dialogue(latestRound, viewingOriginal)));
+      card.append(button("בחזרה לתרגול הנוכחי", () => dialogue(latestRound, viewingOriginal)));
       return;
     }
     if (rounds.length > 1) {
-      card.append(button("חזרה לאסטרטגיה הראשונה", () => dialogue(rounds[0], viewingOriginal)));
+      card.append(button("חזרה לתרגול הקודם", () => dialogue(rounds[0], viewingOriginal)));
     }
     if (viewingOriginal) return;
     if (round.status !== "active") {

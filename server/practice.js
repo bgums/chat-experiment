@@ -5,7 +5,8 @@ import { createHash } from "crypto";
 import { createResponse } from "./openaiClient.js";
 import { extractTextFromResponse } from "./utils/extractText.js";
 import { listPracticeRounds, replacePracticeRounds, practiceRun, practiceQuery, getSessionPersonas } from "./db.js";
-import { practiceStrategyMode, practiceFeedbackContext } from "./utils/practiceProgress.js";
+import { practiceFeedbackContext } from "./utils/practiceProgress.js";
+import { alternativeStrategyGroups, preferredUnpracticedStrategies, strategyCategories } from "./utils/practiceCurriculum.js";
 import { createPracticeResponse, practiceKnowledge, knowledgeHash, knowledgeInstructions } from "./utils/practiceKnowledge.js";
 import { nowGmtPlus3Iso } from "./utils/timezone.js";
 
@@ -97,64 +98,45 @@ export async function startPractice(session, persona, messages, restart = false)
   if (!eligibleSourceMessageIds.length) throw Object.assign(new Error("A therapist–patient–therapist exchange is required for rehearsal."), { status: 400 });
   const config = { ...(last?.config || practiceConfig), strategiesPerChat: practiceConfig.strategiesPerChat, maxAttemptsPerStrategy: practiceConfig.maxAttemptsPerStrategy, promptHash, knowledgeHash, rubricVersion: practiceKnowledge.practiceRubric.version, model: last?.config.model || process.env.OPENAI_MODEL || "gpt-4.1" };
   config.practiceMode = await practiceMode(session, persona);
-  const selectionData = {
-    transcript, eligibleSourceMessageIds,
-    previousStrategies: history.map(r => ({ strategyId: r.plan.strategyId, session: r.session_number, personaId: r.session_persona_id })),
-    excludedStrategyIds: rounds.map(r => r.plan.strategyId)
-  };
-  let plan;
+  const strategyMode = first ? "alternative" : "improve_original";
+  const allowedStrategyGroups = first ? alternativeStrategyGroups(history, first) : null;
+  const allowedStrategyIds = first ? Object.values(allowedStrategyGroups).flat() : [...strategyCategories.keys()];
+  const originalRounds = first ? await listPracticeRounds(session.participantId, null, true) : [];
+  const schema = { ...planSchema, properties: {
+    ...planSchema.properties,
+    sourceMessageId: { type: "integer", enum: eligibleSourceMessageIds },
+    originalStrategyId: { type: "string", enum: first ? [first.plan.originalStrategyId] : allowedStrategyIds },
+    strategyId: { type: "string", enum: allowedStrategyIds }
+  } };
+  const plan = await structured(selection, {
+    transcript, eligibleSourceMessageIds, strategyMode, allowedStrategyGroups,
+    originalStrategyId: first?.plan.originalStrategyId,
+    originalStrategyExplanation: first?.plan.originalStrategyExplanation,
+    preferredStrategyIds: first ? preferredUnpracticedStrategies(allowedStrategyIds, [...savedRounds, ...originalRounds]) : []
+  }, schema, "practice_selection", config.model);
+  const originalStrategyId = first?.plan.originalStrategyId ?? plan.originalStrategyId;
+  if (!eligibleSourceMessageIds.includes(plan.sourceMessageId) || plan.originalStrategyId !== originalStrategyId ||
+      !strategyCategories.has(originalStrategyId) || !allowedStrategyIds.includes(plan.strategyId) ||
+      (!first && plan.strategyId !== originalStrategyId)) {
+    throw new Error("Invalid practice selection. Retry to select the required strategy.");
+  }
+  if (first) plan.originalStrategyExplanation = first.plan.originalStrategyExplanation;
   let originalScore = first?.plan.originalScore;
-  let originalStrategyId = first?.plan.originalStrategyId;
-  if (!first) {
-    plan = await structured(selection, selectionData, planSchema, "practice_selection", config.model);
-    const index = transcript.findIndex(m => m.id === plan.sourceMessageId && m.role === "assistant");
-    if (!eligibleSourceMessageIds.includes(plan.sourceMessageId)) throw new Error("Invalid practice source selection.");
-    originalStrategyId = plan.originalStrategyId;
-    const originalDialogue = transcript.slice(0, index + 2);
-    const result = await structured(scoring, {
-      plan: { ...plan, strategyId: originalStrategyId }, dialogue: originalDialogue,
-      therapistMessage: transcript[index + 1].content, assessmentType: "original"
-    }, scoreSchema, "practice_score", config.model);
-    originalScore = result.score;
-  } else if (originalScore == null) {
-    // Older saved rounds predate original-message scoring.
-    const index = transcript.findIndex(m => m.id === first.plan.sourceMessageId);
+  const index = transcript.findIndex(m => m.id === plan.sourceMessageId && m.role === "assistant");
+  if (originalScore == null) {
     originalScore = (await structured(scoring, {
-      plan: { ...first.plan, strategyId: originalStrategyId }, dialogue: transcript.slice(0, index + 2),
+      plan: { ...plan, strategyId: originalStrategyId }, dialogue: transcript.slice(0, index + 2),
       therapistMessage: transcript[index + 1].content, assessmentType: "original"
     }, scoreSchema, "practice_score", config.model)).score;
   }
-  const strategyMode = practiceStrategyMode(originalScore, rounds.length + 1);
-  const originalDefinition = practiceKnowledge.strategies[originalStrategyId];
-  if (plan && strategyMode === "improve_original" && originalDefinition) {
-    plan = { ...plan, strategyId: originalStrategyId, title: originalDefinition.name,
-      explanation: originalDefinition.definition, principles: originalDefinition.definition, application: originalDefinition.definition };
-  }
-  if (!plan || (strategyMode === "improve_original" && !originalDefinition)) {
-    const sourceId = first?.plan.sourceMessageId || plan.sourceMessageId;
-    const schema = { ...planSchema, properties: {
-      ...planSchema.properties,
-      sourceMessageId: { type: "integer", enum: [sourceId] },
-      originalStrategyId: { type: "string", enum: [originalStrategyId] },
-      ...(strategyMode === "improve_original" ? { strategyId: { type: "string", enum: [originalStrategyId] } } : {})
-    } };
-    plan = await structured(selection, {
-      ...selectionData, eligibleSourceMessageIds: [sourceId], originalScore, strategyMode,
-      requiredStrategyId: strategyMode === "improve_original" ? originalStrategyId : null,
-      excludedStrategyIds: strategyMode === "alternative" ? [...new Set([...selectionData.excludedStrategyIds, originalStrategyId])] : []
-    }, schema, "practice_selection", config.model);
-  }
-  if (!eligibleSourceMessageIds.includes(plan.sourceMessageId) || plan.originalStrategyId !== originalStrategyId ||
-      (strategyMode === "improve_original" ? plan.strategyId !== originalStrategyId : plan.strategyId === originalStrategyId || rounds.some(r => r.plan.strategyId === plan.strategyId))) {
-    throw new Error("Invalid practice selection. Retry to select the required strategy.");
-  }
-  const index = transcript.findIndex(m => m.id === plan.sourceMessageId && m.role === "assistant");
+  plan.originalStrategyCategory = strategyCategories.get(originalStrategyId);
+  plan.strategyCategory = strategyCategories.get(plan.strategyId);
   plan.excerpt = transcript.slice(index - 1, index + 2).map(m => ({ id: m.id, role: m.role, content: m.content }));
   plan.replacedTherapistMessageId = transcript[index + 1].id;
   plan.originalScore = originalScore;
   plan.strategyMode = strategyMode;
   const context = { plan: cleanPlan(plan), ...practiceFeedbackContext(originalScore, 0, config, rounds.length + 1) };
-  // The original score controls the curriculum, never skips its first exercise.
+  // The original score informs coaching.
   context.nextAction = "practice_strategy";
   context.strategyComplete = false;
   const coaching = await structured(coachingPrompt(rounds.length ? "הצג רק את האסטרטגיה הבאה שב-plan.strategyId: הסבר קצר מהי ומה נתרגל בה. אל תנתח שוב את תגובת המטפל המקורית, אל תסווג אותה ואל תצטט אותה." : feedback), context, initialCoachingSchema, "practice_initial_coaching", config.model);
@@ -197,14 +179,15 @@ export async function attemptPractice(session, persona, body) {
   const continuing = round.config.practiceMode === "continuing";
   if (continuing) for (const attempt of round.attempts.filter(attempt => attempt.patient_message?.trim())) dialogue.push({ role: "user", content: attempt.therapist_message }, { role: "assistant", content: attempt.patient_message });
   dialogue.push({ role: "user", content: message });
-  const patientRequest = continuing ? createResponse({
+  const canContinueDialogue = continuing && body.attemptNumber < round.config.maxAttemptsPerStrategy;
+  const patientRequest = canContinueDialogue ? createResponse({
     model: round.config.model,
-    instructions: `${knowledgeInstructions("patient")}\n${buildPersonaPrompt(JSON.parse(persona.personaJson))}\nהמשך לגלם את המטופל בעברית. הגב להודעה האחרונה בלי לתת פידבק או לגלם את המטפל.`,
+    instructions: `${knowledgeInstructions("patient")}\n${buildPersonaPrompt(JSON.parse(persona.personaJson))}\nהמשך לגלם את המטופל בעברית. הגב להודעה האחרונה בלי לתת פידבק או לגלם את המטפל. כתוב תגובה של עד 120 מילים לכל היותר.`,
     input: dialogue.map(({ role, content }) => ({ role, content })), max_output_tokens: 500
   }).then(extractTextFromResponse) : Promise.resolve("");
   const scoreRequest = structured(scoring, { plan: cleanPlan(round.plan), dialogue, therapistMessage: message, assessmentType: "attempt" }, scoreSchema, "practice_score", round.config.model);
   const [scoreResult, patient] = await Promise.all([scoreRequest, patientRequest]);
-  if (continuing && !patient.trim()) throw new Error("Empty patient response.");
+  if (canContinueDialogue && !patient.trim()) throw new Error("Empty patient response.");
   const context = {
     plan: cleanPlan(round.plan), dialogue, therapistMessage: message, patientReply: patient, practiceMode: round.config.practiceMode,
     ...practiceFeedbackContext(scoreResult.score, body.attemptNumber, { ...round.config, strategiesPerChat: practiceConfig.strategiesPerChat }, round.round_number)

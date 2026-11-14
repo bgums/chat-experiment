@@ -57,9 +57,13 @@ repetition across sessions.
 The participant sees three original messages in the order
 therapist → patient → therapist, followed by feedback and hint in matching coaching cards. They write a replacement for
 the last therapist response. The original response is excluded from the rehearsal
-model's dialogue context. Each therapist message receives a short assessment, without a generated patient reply. Each strategy ends at score 5 or after three attempts. Two strategies are practised:
-when the original score is below 5, first improve the original strategy and then try
-an alternative; at 5, try two different alternatives. Both use the same original excerpt.
+model's dialogue context. Each strategy ends after three new therapist attempts. The
+first strategy rehearses the original approach, and the second uses the same excerpt
+to rehearse a different category. Across the two personas, alternative categories
+cannot repeat. Selection prioritizes categories that add coverage to the current
+session and, among them, categories missed in the previous session. The model compares
+clinical fit among the eligible categories. Strategy and category IDs are stored in
+the round plan.
 After the final feedback and tip, Continue advances to the next session step.
 Only three dialogue messages are expanded. Scrolling up reveals a light, centered
 history button inside the chat.
@@ -93,11 +97,11 @@ A temporary “התחלה מחדש של האימון” button in practice delet
 - `practice_attempts`: ordered therapist message, feedback, numeric score,
   summary, evaluation prompt hash and timestamp.
 
-Round status (`active`, `attempt_limit`, or future `early_stopped`) is derived from attempts,
+Round status (`active` or `attempt_limit`) is derived from attempts,
 avoiding a second mutable source of truth. Session reset and participant deletion
 also clear associated practice data.
 
-`server/utils/practiceProgress.js` defines strategy routing, the score-5 success rule,
+`server/utils/practiceProgress.js` defines strategy routing, the definition of good performance,
 the attempt cap and the next action passed to coaching. Attempt tips are saved alongside
 feedback. Original scores are saved in the round plan.
 

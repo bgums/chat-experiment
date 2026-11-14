@@ -56,7 +56,8 @@ export async function createResponse(payload) {
         simulatedText = JSON.stringify({
           sourceMessageId: source.id,
           originalStrategyId: "illustrate_task_rationale", originalStrategyExplanation: "ניסיון להציע פתרון.",
-          strategyId: data.requiredStrategyId || (data.excludedStrategyIds.includes("validate_rupture_experience") ? "invite_rupture_exploration" : "validate_rupture_experience"),
+          strategyId: data.strategyMode === "improve_original" ? "illustrate_task_rationale" :
+            data.preferredStrategyIds[0] || Object.values(data.allowedStrategyGroups)[0][0],
           title: "תרגול איחוי", explanation: "התייחסות לרגע של קושי בקשר.",
           principles: "הקשבה וסקרנות.", application: "התייחסות לחוויה של המטופל."
         });
