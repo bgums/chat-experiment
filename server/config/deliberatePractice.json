@@ -5,5 +5,5 @@
   "maxAttemptsPerStrategy": 3,
   "maxMessageLength": 6000,
   "modePolicy": "continuing",
-  "showRestartPractice": false
+  "showRestartPractice": true
 }

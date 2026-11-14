@@ -119,7 +119,12 @@ function getSessionDefinition(sessionNumber, groupAssignment) {
   const sessions = (groupAssignment === "control" ? flow.controlSessions : flow.sessions) || [];
   const match = sessions.find((session) => Number(session.session) === Number(sessionNumber));
   if (match) {
-    return match;
+    return {
+      ...match,
+      steps: match.steps?.map(step => flow.skippableStepKeys?.includes(step.key)
+        ? { ...step, canSkip: true }
+        : step)
+    };
   }
   return { session: sessionNumber, label: `מפגש ${sessionNumber}`, steps: [{ type: "chat" }] };
 }
@@ -381,10 +386,19 @@ async function practiceContext(req) {
   return { session, persona };
 }
 
+async function practicePayload(session, persona, rounds, messages) {
+  const payload = participantPracticePayload(practiceConfig, rounds, messages);
+  if (practiceConfig.showRestartPractice) {
+    const original = await listPracticeRounds(session.participantId, persona.id, true);
+    payload.originalRounds = participantPracticePayload(practiceConfig, original, []).rounds;
+  }
+  return payload;
+}
+
 app.get("/api/session/:token/persona/:sessionPersonaId/practice", async (req, res) => {
   try {
     const { session, persona } = await practiceContext(req);
-    res.json(participantPracticePayload(practiceConfig, await listPracticeRounds(session.participantId, persona.id), await listMessagesBySessionPersona(persona.id)));
+    res.json(await practicePayload(session, persona, await listPracticeRounds(session.participantId, persona.id), await listMessagesBySessionPersona(persona.id)));
   } catch (error) { res.status(error.status || 500).json({ error: error.message }); }
 });
 
@@ -399,7 +413,7 @@ app.post("/api/session/:token/persona/:sessionPersonaId/practice/:action", async
       if (req.params.action === "attempt") return attemptPractice(session, persona, req.body || {});
       throw Object.assign(new Error("Unknown practice action."), { status: 404 });
     });
-    res.json(participantPracticePayload(practiceConfig, rounds, messages));
+    res.json(await practicePayload(session, persona, rounds, messages));
   } catch (error) {
     console.error("Practice request failed", error);
     res.status(error.status || 500).json({ error: error.status ? error.message : "האימון לא נטען. אפשר לנסות שוב; ההתקדמות השמורה נשמרת." });

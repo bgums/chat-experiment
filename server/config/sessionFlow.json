@@ -1,5 +1,6 @@
 {
   "defaultTotalSessions": 4,
+  "skippableStepKeys": ["demographics", "introduction_module"],
   "sessions": [
     {
       "session": 1,

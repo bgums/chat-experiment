@@ -9,6 +9,11 @@ const statusText = document.getElementById("status-text");
 const sessionLabel = document.getElementById("session-label");
 const stepPill = document.getElementById("step-pill");
 const stepContainer = document.getElementById("step-container");
+const stepSkipBtn = document.getElementById("step-skip");
+const skipLabels = {
+  demographics: "דילוג על שאלון הפרטים הדמוגרפיים",
+  introduction_module: "דילוג על מודול המבוא"
+};
 const stepBackBtn = document.getElementById("step-back");
 const stepForwardBtn = document.getElementById("step-forward");
 const chatSection = document.getElementById("chat-section");
@@ -1065,6 +1070,8 @@ async function renderChat(step) {
 async function renderCurrentStep() {
   stepRenderCounter += 1;
   const renderId = stepRenderCounter;
+  stepSkipBtn.hidden = true;
+  stepSkipBtn.onclick = null;
   setStepIndicator();
   stopChatTimer();
   if (midPrimeTimeout) {
@@ -1091,6 +1098,16 @@ async function renderCurrentStep() {
 
   updateStepNavigationVisibility(step);
 
+  function showSkipButton() {
+    if (stepRenderCounter !== renderId || !step.canSkip || !skipLabels[step.key] || state.isReadOnly) return;
+    stepSkipBtn.textContent = skipLabels[step.key];
+    stepSkipBtn.hidden = false;
+    stepSkipBtn.onclick = () => {
+      state.currentStepIndex += 1;
+      renderCurrentStep();
+    };
+  }
+
   if (step.type === "practice") {
     await renderPractice({
       step: { ...step, token: state.token }, container: stepContainer,
@@ -1115,8 +1132,10 @@ async function renderCurrentStep() {
       }
 
       const formDef = await formResponse.json();
+      if (stepRenderCounter !== renderId) return;
       const savedResponses = savedResponse?.responses || {};
       renderForm(formDef, step, savedResponses);
+      showSkipButton();
     } catch (error) {
       console.error("Failed to load form", error);
       renderPlaceholder("שגיאה בטעינת הטופס, נסו לרענן את העמוד.");
@@ -1136,6 +1155,7 @@ async function renderCurrentStep() {
 
   if (step.type === "module") {
     await renderModule(step);
+    showSkipButton();
     return;
   }
 

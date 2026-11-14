@@ -4,7 +4,7 @@ import { buildPersonaPrompt } from "./utils/personaLoader.js";
 import { createHash } from "crypto";
 import { createResponse } from "./openaiClient.js";
 import { extractTextFromResponse } from "./utils/extractText.js";
-import { listPracticeRounds, practiceRun, practiceQuery, getSessionPersonas } from "./db.js";
+import { listPracticeRounds, replacePracticeRounds, practiceRun, practiceQuery, getSessionPersonas } from "./db.js";
 import { practiceStrategyMode, practiceFeedbackContext } from "./utils/practiceProgress.js";
 import { createPracticeResponse, practiceKnowledge, knowledgeHash, knowledgeInstructions } from "./utils/practiceKnowledge.js";
 import { nowGmtPlus3Iso } from "./utils/timezone.js";
@@ -81,9 +81,14 @@ async function practiceMode(session, persona) {
   return personas[0].id === persona.id ? row.practice_first_mode : row.practice_first_mode === "fixed" ? "continuing" : "fixed";
 }
 
-export async function startPractice(session, persona, messages) {
-  const history = await listPracticeRounds(session.participantId);
+export async function startPractice(session, persona, messages, restart = false) {
+  const savedRounds = await listPracticeRounds(session.participantId);
+  const history = restart ? savedRounds.filter(round => round.session_persona_id !== persona.id) : savedRounds;
   const rounds = history.filter(r => r.session_persona_id === persona.id);
+  const firstSavedRound = savedRounds.find(round => round.session_persona_id === persona.id);
+  if (restart && !firstSavedRound) {
+    throw Object.assign(new Error("Start practice before restarting."), { status: 409 });
+  }
   const last = rounds.at(-1);
   if (last?.status === "active" || rounds.length >= practiceConfig.strategiesPerChat) return rounds;
   const transcript = messages.filter(m => ["user", "assistant"].includes(m.role));
@@ -155,17 +160,19 @@ export async function startPractice(session, persona, messages) {
   const coaching = await structured(coachingPrompt(rounds.length ? "הצג רק את האסטרטגיה הבאה שב-plan.strategyId: הסבר קצר מהי ומה נתרגל בה. אל תנתח שוב את תגובת המטפל המקורית, אל תסווג אותה ואל תצטט אותה." : feedback), context, initialCoachingSchema, "practice_initial_coaching", config.model);
   plan.feedback = coaching.feedback;
   plan.hint = coaching.hint;
-  await practiceRun(`INSERT INTO practice_rounds
+  if (restart) {
+    await replacePracticeRounds(session.participantId, session.sessionId, persona.id, firstSavedRound.id, plan, config);
+  } else await practiceRun(`INSERT INTO practice_rounds
     (participant_id, session_id, session_persona_id, round_number, plan_json, config_json, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)`, [session.participantId, session.sessionId, persona.id, rounds.length + 1, JSON.stringify(plan), JSON.stringify(config), nowGmtPlus3Iso()]);
   return listPracticeRounds(session.participantId, persona.id);
 }
 
-// Temporary tuning control: replace practice data for this conversation, without an archive.
 export async function restartPractice(session, persona, messages) {
-  await practiceRun("DELETE FROM practice_attempts WHERE round_id IN (SELECT id FROM practice_rounds WHERE participant_id = ? AND session_persona_id = ?)", [session.participantId, persona.id]);
-  await practiceRun("DELETE FROM practice_rounds WHERE participant_id = ? AND session_persona_id = ?", [session.participantId, persona.id]);
-  return startPractice(session, persona, messages);
+  if (!practiceConfig.showRestartPractice) {
+    throw Object.assign(new Error("Practice restart is disabled."), { status: 403 });
+  }
+  return startPractice(session, persona, messages, true);
 }
 
 export async function attemptPractice(session, persona, body) {

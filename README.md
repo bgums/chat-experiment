@@ -8,7 +8,8 @@ Requires Node.js 18+ and `npm install`. Set these environment variables in `.env
 `OPENAI_API_KEY`, `OPENAI_MODEL` (default `gpt-4.1`), `ADMIN_USER`, `ADMIN_PASSWORD`, and optionally `PORT` (default 3000).
 
 Run `npm start`, open `http://localhost:3000/admin`, and create participant links.
-`SQLITE_PATH` optionally selects the database; default: `server/data/clinic-rehearsal.db`.
+`SQLITE_PATH` optionally selects the database; default: `server/data/clinic-rehearsal-tuning.db`. To switch databases, set
+`SQLITE_PATH` in `.env` (prefer an absolute path) and restart the server.
 Use a separate database for pilots. Schema migrations run on startup; back up an
 existing research database before upgrading it.
 
@@ -147,8 +148,14 @@ Historical attempts without patient replies remain intact.
 
 Set `modePolicy` to `counterbalanced` to restore random assignment of fixed/continuing
 across the two patients. Session assignments are retained for that option.
-`showRestartPractice` is false to hide the temporary restart button; set it to true
-to show it again. The restart endpoint remains available.
+Set `showRestartPractice` in `server/config/deliberatePractice.json` to `false` and
+restart the server to disable the restart endpoint and hide the original-run view.
+When enabled, a successful restart preserves the first run for read-only viewing
+and replaces any previous retry. Progress and exports use the current run.
+
+The first meeting has temporary skip buttons for demographics and the introduction
+module. Set `skippableStepKeys` to `[]` in `server/config/sessionFlow.json` and reload
+the session page to hide both buttons. A skip advances without submitting responses.
 
 Attempt feedback displays bold verbal assessments: 1 = טעון שיפור,
 3 = ביצוע טוב, טעון שיפור, 5 = ביצוע טוב. Numeric scores remain in research data

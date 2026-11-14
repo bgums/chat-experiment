@@ -3,6 +3,7 @@ export async function renderPractice({ step, container, fetchApi, readOnly, next
   const endpoint = `/api/session/${step.token}/persona/${step.sessionPersonaId}/practice`;
   let data;
   let busy = false;
+  const drafts = new Map();
   const element = (tag, text, className) => {
     const node = document.createElement(tag);
     if (text) node.textContent = text;
@@ -73,7 +74,7 @@ export async function renderPractice({ step, container, fetchApi, readOnly, next
     card.append(status);
   }
   async function transition(action) {
-    if (action !== "start") loading();
+    if (action === "restart") card.append(element("p", "מכינים אימון חדש…", "practice-transition"));
     else card.append(element("p", "טוען את האסטרטגיה הבאה…", "practice-transition"));
     try {
       data = await request(action);
@@ -81,17 +82,29 @@ export async function renderPractice({ step, container, fetchApi, readOnly, next
     } catch (error) {
       if (!isCurrent()) return;
       errorBox.textContent = error.message;
-      card.replaceChildren(errorBox, button("נסה שוב", () => transition(action)));
+      if (data.rounds.length) dialogue(data.rounds.at(-1));
+      else card.replaceChildren(errorBox, button("נסה שוב", () => transition(action)));
     }
   }
   function restartButton() {
     return button("התחלה מחדש של האימון", () => transition("restart"));
   }
-  function dialogue(round) {
+  function dialogue(round, viewingOriginal = false) {
     if (!isCurrent()) return;
     card.replaceChildren();
     header();
-    if (!readOnly && data.config.showRestartPractice) card.append(restartButton());
+    const rounds = viewingOriginal ? data.originalRounds : data.rounds;
+    const latestRound = rounds.at(-1);
+    const reviewingStrategy = round.id !== latestRound.id;
+    if (viewingOriginal) {
+      heading("האימון הראשון");
+      card.append(button("חזרה לאימון האחרון", () => dialogue(data.rounds.at(-1))));
+    } else if (data.config.showRestartPractice) {
+      if (!readOnly) card.append(restartButton());
+      if (data.originalRounds?.length) {
+        card.append(button("צפייה באימון הראשון", () => dialogue(data.originalRounds.at(-1), true)));
+      }
+    }
     const chat = element("div", "", "practice-dialogue");
     chat.setAttribute("role", "log");
     chat.setAttribute("aria-label", "שיחת תרגול והכוונה");
@@ -104,7 +117,7 @@ export async function renderPractice({ step, container, fetchApi, readOnly, next
     const firstExcerptIndex = (data.originalMessages || []).findIndex(message => message.id === round.plan.excerpt[0]?.id);
     const earlierOriginal = firstExcerptIndex > 0 ? data.originalMessages.slice(0, firstExcerptIndex) : [];
     const entries = [];
-    for (const saved of data.rounds) {
+    for (const saved of rounds.slice(0, rounds.indexOf(round) + 1)) {
       if (saved.round_number === 1) entries.push(...saved.plan.excerpt.map(message => ({ ...message })));
       else entries.push({ ...saved.plan.excerpt[1] });
       entries.push({ coaching: saved.plan.feedback, title: "פידבק" }, { coaching: saved.plan.hint, title: "טיפ" });
@@ -155,13 +168,21 @@ export async function renderPractice({ step, container, fetchApi, readOnly, next
         chat.scrollTop = 0;
       }
     });
+    if (reviewingStrategy) {
+      card.append(button("חזרה לאסטרטגיה השנייה", () => dialogue(latestRound, viewingOriginal)));
+      return;
+    }
+    if (rounds.length > 1) {
+      card.append(button("חזרה לאסטרטגיה הראשונה", () => dialogue(rounds[0], viewingOriginal)));
+    }
+    if (viewingOriginal) return;
     if (round.status !== "active") {
       if (data.rounds.length < data.config.strategiesPerChat && !readOnly) {
         card.append(button("המשך לאסטרטגיה הבאה", () => transition("start")), errorBox);
       } else card.append(button("המשך", next), errorBox);
       return;
     }
-    if (readOnly) { card.append(element("p", "מצב צפייה בלבד — התרגול טרם הושלם.")); return; }
+    if (readOnly) { card.append(element("p", "מצב צפייה בלבד — התרגול טרם הושלם."), errorBox); return; }
     const form = element("form", "", "practice-form");
     const label = element("label", round.config.practiceMode === "continuing" && round.attempts.at(-1)?.patient_message ? "הגיבו לתגובת המטופל החדשה." : "נסחו תגובה חלופית.");
     const input = element("textarea");
@@ -170,6 +191,8 @@ export async function renderPractice({ step, container, fetchApi, readOnly, next
     input.required = true;
     input.maxLength = round.config.maxMessageLength;
     input.rows = 3;
+    input.value = drafts.get(round.id) || "";
+    input.addEventListener("input", () => drafts.set(round.id, input.value));
     const submit = element("button", "שליחה");
     submit.className = "completion-submit-button";
     submit.type = "submit";
@@ -186,6 +209,7 @@ export async function renderPractice({ step, container, fetchApi, readOnly, next
       errorBox.textContent = "";
       try {
         data = await request("attempt", { roundId: round.id, attemptNumber: round.attempts.length + 1, message: input.value });
+        drafts.delete(round.id);
         dialogue(data.rounds.at(-1));
       } catch (error) { errorBox.textContent = error.message; }
       finally { busy = false; submit.disabled = false; input.disabled = false; pending.textContent = ""; }

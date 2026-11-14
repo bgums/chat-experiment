@@ -1,3 +1,4 @@
+import "dotenv/config";
 import sqlite3 from "sqlite3";
 import path from "path";
 import fs from "fs";
@@ -9,7 +10,7 @@ import { getPracticeStatus } from "./utils/practiceProgress.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const DB_PATH = process.env.SQLITE_PATH || path.join(__dirname, "data", "clinic-rehearsal.db");
+const DB_PATH = process.env.SQLITE_PATH || path.join(__dirname, "data", "clinic-rehearsal-tuning.db");
 
 let dbInstance = null;
 
@@ -222,13 +223,15 @@ export function practiceRun(sql, params = []) {
   }));
 }
 
-export async function listPracticeRounds(participantId, personaId = null) {
+export async function listPracticeRounds(participantId, personaId = null, original = false) {
   const rounds = await practiceQuery(`SELECT r.*, p.[group] AS "group", s.session_number
     FROM practice_rounds r JOIN participants p ON p.id = r.participant_id
     JOIN sessions s ON s.id = r.session_id WHERE r.participant_id = ?
+    AND r.round_number ${original ? "<" : ">"} 0
     ${personaId == null ? "" : "AND r.session_persona_id = ?"} ORDER BY r.id`,
     personaId == null ? [participantId] : [participantId, personaId]);
   for (const round of rounds) {
+    round.round_number = Math.abs(round.round_number);
     round.plan = JSON.parse(round.plan_json);
     round.config = JSON.parse(round.config_json);
     delete round.plan_json;
@@ -239,6 +242,44 @@ export async function listPracticeRounds(participantId, personaId = null) {
     round.completed_at = round.status === "active" ? null : last.created_at;
   }
   return rounds;
+}
+
+// Negative round numbers reserve the original run under the existing unique key.
+export async function replacePracticeRounds(participantId, sessionId, personaId, expectedRoundId, plan, config) {
+  const db = new sqlite3.Database(DB_PATH, sqlite3.OPEN_READWRITE);
+  db.configure("busyTimeout", 5000);
+  const run = (sql, params = []) => new Promise((resolve, reject) => {
+    db.run(sql, params, error => error ? reject(error) : resolve());
+  });
+  const owner = [participantId, sessionId, personaId];
+  const scope = "participant_id = ? AND session_id = ? AND session_persona_id = ?";
+  try {
+    await run("BEGIN IMMEDIATE");
+    try {
+      const current = await new Promise((resolve, reject) => {
+        db.get(`SELECT id FROM practice_rounds WHERE ${scope} AND round_number = 1`, owner,
+          (error, row) => error ? reject(error) : resolve(row));
+      });
+      if (current?.id !== expectedRoundId) {
+        throw Object.assign(new Error("Practice has changed. Reload before restarting."), { status: 409 });
+      }
+      await run(`UPDATE practice_rounds SET round_number = -round_number
+        WHERE ${scope} AND round_number > 0
+        AND NOT EXISTS (SELECT 1 FROM practice_rounds WHERE ${scope} AND round_number < 0)`, [...owner, ...owner]);
+      await run(`DELETE FROM practice_attempts WHERE round_id IN
+        (SELECT id FROM practice_rounds WHERE ${scope} AND round_number > 0)`, owner);
+      await run(`DELETE FROM practice_rounds WHERE ${scope} AND round_number > 0`, owner);
+      await run(`INSERT INTO practice_rounds
+        (participant_id, session_id, session_persona_id, round_number, plan_json, config_json, created_at)
+        VALUES (?, ?, ?, 1, ?, ?, ?)`, [...owner, JSON.stringify(plan), JSON.stringify(config), nowGmtPlus3Iso()]);
+      await run("COMMIT");
+    } catch (error) {
+      await run("ROLLBACK");
+      throw error;
+    }
+  } finally {
+    await new Promise((resolve, reject) => db.close(error => error ? reject(error) : resolve()));
+  }
 }
 
 function getDb() {

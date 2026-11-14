@@ -126,6 +126,7 @@ try {
   assert.ok(!first.steps.some(s => s.type === "feedback" || s.key === "pre_feedback"));
   assert.deepEqual(first.steps.filter(s => s.type === "practice").map(s => s.sessionPersonaId), first.steps.filter(s => s.type === "chat").map(s => s.sessionPersonaId));
   assert.equal(first.steps.filter(s => s.type === "module").length, 1);
+  assert.deepEqual(first.steps.filter(s => s.canSkip).map(s => s.key), ["demographics", "introduction_module"]);
   const token = invite.sessions[1].token;
   const session = await api(`/api/session/${token}`);
   assert.equal(session.steps.filter(s => s.type === "practice").length, 2);
@@ -165,7 +166,7 @@ try {
     assert.equal(data.originalMessages[0].content, "שלום");
     assert.equal(data.config.strategiesPerChat, 2);
     assert.equal(initial.config.practiceMode, "continuing");
-    assert.equal(data.config.showRestartPractice, false);
+    assert.equal(data.config.showRestartPractice, true);
     // Read-only requests cannot write or call the model.
     await api(url + "/attempt", {}, 403, { "X-Session-View-Only": "1" });
     await api(url + "/attempt", { roundId: initial.id, attemptNumber: 2, message: "test" }, 409);
@@ -215,12 +216,21 @@ try {
   const restartUrl = practiceUrl(personas[0]);
   const oldRound = (await api(restartUrl)).rounds[0];
   await api(restartUrl + "/restart", {}, 403, { "X-Session-View-Only": "1" });
-  const restarted = (await api(restartUrl + "/restart", {})).rounds[0];
+  const firstRestart = await api(restartUrl + "/restart", {});
+  assert.deepEqual(firstRestart.originalRounds[0], oldRound);
+  const discarded = firstRestart.rounds[0];
+  await api(restartUrl + "/attempt", { roundId: discarded.id, attemptNumber: 1, message: "תגובה שתוחלף" });
+  const secondRestart = await api(restartUrl + "/restart", {});
+  assert.deepEqual(secondRestart.originalRounds, firstRestart.originalRounds);
+  assert.deepEqual((await api(restartUrl)).originalRounds, firstRestart.originalRounds);
+  assert.equal((await all("SELECT * FROM practice_attempts WHERE round_id = ?", [discarded.id])).length, 0);
+  assert.equal((await all("SELECT * FROM practice_rounds WHERE id = ?", [discarded.id])).length, 0);
+  const restarted = secondRestart.rounds[0];
   assert.notEqual(restarted.id, oldRound.id);
   assert.equal(restarted.config.practiceMode, oldRound.config.practiceMode);
   assert.equal(restarted.attempts.length, 0);
   assert.equal(restarted.round_number, 1);
-  assert.equal((await all("SELECT * FROM practice_attempts WHERE round_id = ?", [oldRound.id])).length, 0);
+  assert.equal((await all("SELECT * FROM practice_attempts WHERE round_id = ?", [oldRound.id])).length, oldRound.attempts.length);
   assert.equal((await api(practiceUrl(personas[1]))).rounds[0].attempts.length, 3);
   await api(restartUrl + "/attempt", { roundId: oldRound.id, attemptNumber: 1, message: "stale" }, 409);
   for (let n = 1; n <= 3; n++) await api(restartUrl + "/attempt", { roundId: restarted.id, attemptNumber: n, message: "תגובה חלופית" });
