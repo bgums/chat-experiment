@@ -10,7 +10,7 @@ import { getPracticeStatus } from "./utils/practiceProgress.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const DB_PATH = process.env.SQLITE_PATH || path.join(__dirname, "data", "clinic-rehearsal-tuning.db");
+const DB_PATH = process.env.SQLITE_PATH || path.join(__dirname, "data", "experiment-2-sona.db");
 
 let dbInstance = null;
 
@@ -397,7 +397,7 @@ export function listParticipants() {
         if (row.session_id) {
           const participant = participantsById.get(row.participant_id);
           const sessionStatus = row.session_status || "pending";
-          if (sessionStatus === "completed") {
+          if (sessionStatus === "completed" || row.completed_at) {
             participant.completedSessions += 1;
           }
           participant.sessions.push({
@@ -416,7 +416,14 @@ export function listParticipants() {
         }
       });
 
-      resolve(Array.from(participantsById.values()));
+      resolve(Array.from(participantsById.values()).map(participant => {
+        const sessions = participant.sessions;
+        participant.status = sessions.length && sessions.every(s => s.status === "completed" || s.completedAt)
+          ? "completed"
+          : sessions.some(s => s.startedAt || s.consentCompletedAt || s.completedAt || ["in_progress", "completed"].includes(s.status))
+            ? "in_progress" : "invited";
+        return participant;
+      }));
     });
   });
 }
@@ -537,11 +544,14 @@ export function markSessionStarted(sessionId) {
   const startedAt = nowGmtPlus3Iso();
   return new Promise((resolve, reject) => {
     db.run(
-      "UPDATE sessions SET status = 'in_progress', started_at = COALESCE(started_at, ?) WHERE id = ?",
+      "UPDATE sessions SET status = 'in_progress', started_at = COALESCE(started_at, ?) WHERE id = ? AND status != 'completed' AND completed_at IS NULL",
       [startedAt, sessionId],
       function updateErr(err) {
         if (err) return reject(err);
-        resolve(true);
+        db.run("UPDATE participants SET status = 'in_progress' WHERE id = (SELECT participant_id FROM sessions WHERE id = ?) AND status != 'completed'", [sessionId], (participantErr) => {
+          if (participantErr) return reject(participantErr);
+          resolve(true);
+        });
       }
     );
   });

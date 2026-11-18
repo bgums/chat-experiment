@@ -1,6 +1,6 @@
 import sqlite3, os
 
-DB = os.path.join(os.path.dirname(__file__), "clinic-rehearsal.db")
+DB = os.environ.get("SQLITE_PATH") or os.path.join(os.path.dirname(__file__), "..", "experiment-2-sona.db")
 if not os.path.exists(DB):
     print('DB not found at', DB)
     raise SystemExit(1)

@@ -55,6 +55,15 @@ for (const [score, label] of [[1, "טעון שיפור"], [3, "ביצוע טוב
 }
 
 const temp = await mkdtemp(path.join(os.tmpdir(), "repair-experiment-"));
+const adminSource = await readFile("client/admin.js", "utf8");
+const computeStatus = vm.runInNewContext(adminSource.slice(adminSource.indexOf("function computeStatus("), adminSource.indexOf("function renderStatus(")) + "\ncomputeStatus", { Date });
+assert.equal(computeStatus({}).key, "upcoming");
+assert.equal(computeStatus({ status: "completed" }).key, "completed");
+assert.equal(computeStatus({ completedAt: new Date().toISOString() }).key, "completed");
+assert.equal(computeStatus({ startedAt: new Date().toISOString() }).key, "in_progress");
+assert.equal(computeStatus({ status: "in_progress" }).key, "in_progress");
+assert.equal(computeStatus({ consentCompletedAt: new Date(Date.now() - 90 * 60000).toISOString() }).key, "in_progress");
+assert.equal(computeStatus({ startedAt: new Date(Date.now() - 121 * 60000).toISOString() }).key, "incomplete");
 const dbPath = path.join(temp, "test.db");
 // Start from the previous participant schema to exercise migration as well.
 const legacy = new sqlite3.Database(dbPath);
@@ -109,7 +118,8 @@ try {
     if ([2, 3].includes(sessionNumber)) {
       assert.ok(!flow.steps.some(step => step.type === "chat"));
       reading.push(flow.steps.filter(step => step.type === "module").at(-1).key);
-    } else assert.ok(flow.steps.some(step => step.type === "chat"));
+    } else assert.equal(flow.steps.filter(step => step.type === "chat").length, 2);
+    assert.ok(!flow.steps.some(step => step.canSkip));
   }
   await api(`/api/session/${control.sessions[1].token}/complete`, {});
   assert.equal((await all("SELECT reading_order FROM participants WHERE participant_code = 'legacy-control'"))[0].reading_order, "confrontation_first");
@@ -138,15 +148,18 @@ try {
   const options = await api("/api/admin/session-options");
   assert.deepEqual(options.groups.map(g => g.key), ["experiment", "control"]);
   const first = await api(`/api/session/${invite.sessions[0].token}`);
+  const adminParticipant = (await api("/api/admin/participants")).participants.find(p => p.participantCode === invite.participantCode);
+  assert.equal(adminParticipant.status, "in_progress");
+  assert.ok(adminParticipant.sessions[0].startedAt);
   assert.equal(first.steps.filter(s => s.type === "chat").length, 2);
-  assert.equal(first.steps.filter(s => s.type === "practice").length, 2);
+  assert.equal(first.steps.filter(s => s.type === "practice").length, 0);
   assert.ok(!first.steps.some(s => s.type === "feedback" || s.key === "pre_feedback"));
-  assert.deepEqual(first.steps.filter(s => s.type === "practice").map(s => s.sessionPersonaId), first.steps.filter(s => s.type === "chat").map(s => s.sessionPersonaId));
   assert.equal(first.steps.filter(s => s.type === "module").length, 1);
-  assert.deepEqual(first.steps.filter(s => s.canSkip).map(s => s.key), ["demographics", "introduction_module"]);
+  assert.ok(!first.steps.some(s => s.canSkip));
   const token = invite.sessions[1].token;
   const session = await api(`/api/session/${token}`);
   assert.equal(session.steps.filter(s => s.type === "practice").length, 2);
+  assert.deepEqual(session.steps.filter(s => s.type === "practice").map(s => s.sessionPersonaId), session.steps.filter(s => s.type === "chat").map(s => s.sessionPersonaId));
   assert.equal(session.steps.some(s => s.type === "module"), false);
   assert.deepEqual(first.steps.filter(s => s.key === "demographics").length, 1);
   assert.deepEqual(session.steps.slice(0, 2).map(s => s.key), ["consent", "confidentiality_request"]);
@@ -155,6 +168,7 @@ try {
   for (const meeting of invite.sessions.slice(2)) {
     const overview = await api(`/api/session/${meeting.token}`);
     assert.equal(overview.steps.some(s => s.key === "demographics"), false);
+    assert.equal(overview.steps.filter(s => s.type === "practice").length, 2);
   }
   const personas = session.steps.filter(s => s.type === "chat");
   const [participant] = await all("SELECT id FROM participants WHERE participant_code = ?", [invite.participantCode]);
@@ -163,7 +177,7 @@ try {
   await api(`/api/session/${token}/complete`, {}, 400);
   await api(practiceUrl(personas[0]) + "/start", {}, 400);
   const firstChat = first.steps.find(s => s.type === "chat");
-  await api(`/api/session/${invite.sessions[0].token}/persona/${firstChat.sessionPersonaId}/practice/start`, {}, 400);
+  await api(`/api/session/${invite.sessions[0].token}/persona/${firstChat.sessionPersonaId}/practice/start`, {}, 403);
   for (const persona of personas) {
     await api(`/api/session/${token}/forms/post_chat`, { sessionPersonaId: persona.sessionPersonaId, responses: {} });
     for (const [role, content] of [["assistant", "שלום"], ["user", "מה קרה בינינו?"], ["assistant", "אני מרגיש שאתה לא מבין אותי"], ["user", persona === personas[0] ? "תגובה מקורית" : "excellent original"]]) {

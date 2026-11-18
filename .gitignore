@@ -3,3 +3,5 @@ node_modules/
 server/data/experiment.db
 server/data/clinic-rehearsal.db
 server/data/clinic-rehearsal-tuning.db
+
+server/data/experiment-2-sona.db*

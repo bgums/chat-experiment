@@ -1,6 +1,7 @@
 {
   "defaultTotalSessions": 4,
-  "skippableStepKeys": ["demographics", "introduction_module"],
+  "showConsentAndConfidentiality": true,
+  "skippableStepKeys": [],
   "sessions": [
     {
       "session": 1,

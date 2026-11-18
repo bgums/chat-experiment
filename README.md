@@ -8,7 +8,7 @@ Requires Node.js 18+ and `npm install`. Set these environment variables in `.env
 `OPENAI_API_KEY`, `OPENAI_MODEL` (default `gpt-4.1`), `ADMIN_USER`, `ADMIN_PASSWORD`, and optionally `PORT` (default 3000).
 
 Run `npm start`, open `http://localhost:3000/admin`, and create participant links.
-`SQLITE_PATH` optionally selects the database; default: `server/data/clinic-rehearsal-tuning.db`. To switch databases, set
+`SQLITE_PATH` optionally selects the database; default: `server/data/experiment-2-sona.db`. To switch databases, set
 `SQLITE_PATH` in `.env` (prefer an absolute path) and restart the server.
 Use a separate database for pilots. Schema migrations run on startup; back up an
 existing research database before upgrading it.
@@ -68,9 +68,11 @@ After the final feedback and tip, Continue advances to the next session step.
 Only three dialogue messages are expanded. Scrolling up reveals a light, centered
 history button inside the chat.
 
-Consent and confidentiality screens are temporarily hidden. Set
-`showConsentAndConfidentiality` to `true` in `server/config/sessionFlow.json` to
-restore both screens in their original order.
+Consent and confidentiality screens appear at the start of each session.
+Demographics and the introduction module also appear in session 1, with no skip
+buttons. Skip handling remains available in code, but `skippableStepKeys` is empty.
+Both groups have two patient chats without deliberate practice in session 1.
+The experiment group receives deliberate practice after each chat in sessions 2–4.
 
 Each assessment also returns a separate numeric `score`, stored in the database
 and shown at the beginning of feedback while `showScoresToParticipant` is true.

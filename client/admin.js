@@ -154,13 +154,15 @@ function computeSessionScheduledFor(scheduleStart, sessionNumber) {
 }
 
 function computeStatus(session) {
-  const startedAt = session?.consentCompletedAt || null;
-  if (!startedAt) return { key: "upcoming", label: "Upcoming" };
   if (session?.completedAt || session?.status === "completed") {
     return { key: "completed", label: "Completed" };
   }
+  const startedAt = session?.consentCompletedAt || session?.startedAt || null;
+  if (!startedAt) return session?.status === "in_progress"
+    ? { key: "in_progress", label: "In Progress" }
+    : { key: "upcoming", label: "Upcoming" };
   const elapsed = Date.now() - new Date(startedAt).getTime();
-  if (elapsed < 60 * 60 * 1000) return { key: "in_progress", label: "In Progress" };
+  if (!Number.isFinite(elapsed) || elapsed < 2 * 60 * 60 * 1000) return { key: "in_progress", label: "In Progress" };
   return { key: "incomplete", label: "Incomplete" };
 }
 
@@ -1154,3 +1156,21 @@ async function initialize() {
 }
 
 initialize();
+
+// Keep status labels current while preserving unsaved metadata inputs.
+let statusRefreshRunning = false;
+async function refreshVisibleStatuses() {
+  if (document.hidden || statusRefreshRunning || _saveTimers.size ||
+      document.activeElement?.matches("input, textarea, select")) return;
+  statusRefreshRunning = true;
+  try {
+    await Promise.all([loadParticipants(), loadIncompleteSessions()]);
+  } catch (error) {
+    console.error("Failed to refresh admin statuses", error);
+  } finally {
+    statusRefreshRunning = false;
+  }
+}
+setInterval(refreshVisibleStatuses, 30000);
+document.addEventListener("visibilitychange", refreshVisibleStatuses);
+window.addEventListener("focus", refreshVisibleStatuses);

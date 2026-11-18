@@ -143,7 +143,7 @@ function getSessionSteps(session) {
 
 function shouldIncludeFeedbackForSession(session) {
   if (!session) return false;
-  return session.groupAssignment === "experiment";
+  return session.groupAssignment === "experiment" && [2, 3, 4].includes(Number(session.sessionNumber));
 }
 
 async function isFeedbackAllowedForPersona(session, sessionPersonaId) {
