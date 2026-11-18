@@ -284,8 +284,45 @@ try {
   assert.equal((await all("SELECT * FROM practice_rounds WHERE session_id = ?", [secondSession.id])).length, 0);
   assert.equal((await all("SELECT * FROM practice_attempts")).length, 0);
   const batch = await api("/api/admin/invite-balanced-batch", {});
-  assert.ok(batch.participants.every(p => p.groupAssignment === "experiment"));
-  for (const p of batch.participants) assert.equal(new Set(Object.values(p.sessionGroupMap)).size, 4);
+  assert.equal(batch.totalParticipants, 8);
+  assert.equal(batch.smallestBalancedBatch, 8);
+  for (const arm of ["experiment", "control"]) {
+    const members = batch.participants.filter(p => p.groupAssignment === arm);
+    assert.equal(members.length, 4);
+    if (arm === "control") {
+      assert.equal(members.filter(p => p.readingOrder === "withdrawal_first").length, 2);
+      assert.equal(members.filter(p => p.readingOrder === "confrontation_first").length, 2);
+    }
+    const firstPersonaCounts = new Map();
+    const chatSessions = arm === "control" ? [1, 4] : [1, 2, 3, 4];
+    for (const sessionNumber of chatSessions) {
+      assert.equal(new Set(members.map(p => p.sessionGroupMap[sessionNumber])).size, 4);
+    }
+    for (const member of members) {
+      assert.deepEqual(Object.keys(member.sessionGroupMap).map(Number), chatSessions);
+      assert.equal(new Set(Object.values(member.sessionGroupMap)).size, chatSessions.length);
+      assert.equal((await all('SELECT [group] AS arm FROM participants WHERE participant_code = ?', [member.participantCode]))[0].arm, arm);
+      assert.equal((await all('SELECT reading_order FROM participants WHERE participant_code = ?', [member.participantCode]))[0].reading_order, member.readingOrder);
+      for (const meeting of member.sessions) {
+        const rows = await all(`SELECT sp.persona_json, sp.persona_csv_id FROM session_personas sp
+          JOIN sessions s ON s.id = sp.session_id WHERE s.session_token = ? ORDER BY sp.persona_order`, [meeting.token]);
+        const isChat = chatSessions.includes(meeting.sessionNumber);
+        assert.equal(rows.length, isChat ? 2 : 0);
+        if (isChat) firstPersonaCounts.set(rows[0].persona_csv_id, (firstPersonaCounts.get(rows[0].persona_csv_id) || 0) + 1);
+        for (const row of rows) assert.equal(String(JSON.parse(row.persona_json).group), member.sessionGroupMap[meeting.sessionNumber]);
+        const overview = await api(`/api/session/${meeting.token}`);
+        assert.equal(overview.groupAssignment, arm);
+        assert.equal(overview.steps.filter(s => s.type === "chat").length, isChat ? 2 : 0);
+        if (arm === "control" && [2, 3].includes(meeting.sessionNumber)) {
+          const firstHalf = member.readingOrder === "withdrawal_first" ? "withdrawal_module" : "confrontation_module";
+          const secondHalf = member.readingOrder === "withdrawal_first" ? "confrontation_module" : "withdrawal_module";
+          assert.equal(overview.steps.filter(s => s.type === "module").at(-1).key, meeting.sessionNumber === 2 ? firstHalf : secondHalf);
+        }
+      }
+    }
+    assert.equal(firstPersonaCounts.size, 8);
+    assert.ok([...firstPersonaCounts.values()].every(count => count === (arm === "control" ? 1 : 2)));
+  }
   assert.doesNotMatch(logs, /SQLITE_ERROR|Failed to add|Could not remove/);
   console.log("PASS: flow, experiment group, practice selection, two strategies, original practice and category coverage, continued practice after score 5, three-attempt cap, restart, legacy flag removal, persistence, ownership, read-only, completion, export, reset, balanced allocation");
 } finally {

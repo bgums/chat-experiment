@@ -289,9 +289,12 @@ function getDb() {
   return dbInstance;
 }
 
-export function createInvite({ groupAssignment = "experiment" } = {}) {
+export function createInvite({ groupAssignment = "experiment", readingOrder: assignedReadingOrder } = {}) {
   const group = groupAssignment === "control" ? "control" : "experiment";
-  const readingOrder = group === "control" ? (Math.random() < 0.5 ? "withdrawal_first" : "confrontation_first") : null;
+  const readingOrder = group === "control"
+    ? (["withdrawal_first", "confrontation_first"].includes(assignedReadingOrder)
+      ? assignedReadingOrder : (Math.random() < 0.5 ? "withdrawal_first" : "confrontation_first"))
+    : null;
   const db = getDb();
   const participantCode = randomUUID();
   const totalSessions = 4;

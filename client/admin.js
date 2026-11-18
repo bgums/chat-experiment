@@ -867,12 +867,12 @@ createBalancedBatchForm?.addEventListener("submit", async (event) => {
       const links = (participant.sessions || [])
         .map((s) => `S${escapeHtml(s.sessionNumber)}: <a href="/?token=${encodeURIComponent(s.token)}" target="_blank" rel="noopener">פתח</a>`)
         .join(" · ");
-      const assignmentLabel = "E";
+      const assignmentLabel = participant.groupAssignment === "control" ? "ביקורת" : "ניסוי";
       return `<li><strong>${idx + 1}. ${assignmentLabel}</strong> · ${escapeHtml(participant.participantCode)}<br>${links}</li>`;
     }).join("");
 
     const total = Number(payload.totalParticipants) || 0;
-    const header = `נוצר באץ' מאוזן: ${escapeHtml(total)} משתתפים בקבוצת הניסוי.`;
+    const header = `נוצר באץ' מאוזן: ${escapeHtml(total)} משתתפים — 4 בקבוצת הניסוי ו־4 בקבוצת הביקורת.`;
     const html = `${header}<ol style="margin:8px 0 0 18px;padding:0;display:flex;flex-direction:column;gap:8px;">${rows}</ol>`;
     setManagementMessage(html, false, true);
     await refreshAllPanels();

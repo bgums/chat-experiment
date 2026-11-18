@@ -23,9 +23,15 @@ and deliberate practice with inline feedback and hint messages after both conver
 Each meeting ends with completion; session 4 shows the final study thank-you.
 
 Select Experiment or Control when creating an individual invite. Balanced batches
-remain experiment-only. Control participants follow the original protocol: chats in
+contain eight participants: four Experiment and four Control. Each of the four
+persona pairs appears once per chat session in each arm. Pair assignments and
+the order of the two personas are randomized; pairs stay together and no pair
+repeats for a participant. Control participants follow the original protocol: chats in
 sessions 1 and 4, and withdrawal/confrontation modules in sessions 2 and 3 in a
 randomized order saved as reading_order. Control does not receive deliberate practice.
+Each balanced batch assigns exactly two Control participants to each reading order.
+Within each arm, each persona appears first in its pair equally often (twice for
+Experiment, once for Control), with these orders randomly allocated to appearances.
 Existing group labels and saved reading orders are preserved (legacy experimental
 is normalized to experiment). Missing control reading orders are assigned on migration.
 

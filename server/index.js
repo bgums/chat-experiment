@@ -521,9 +521,10 @@ function groupPersonasByGroupKey(personas) {
   return grouped;
 }
 
-function buildPersonaRowsForGroup(groupedPersonas, groupKey) {
+function buildPersonaRowsForGroup(groupedPersonas, groupKey, reverseOrder) {
   const personas = groupedPersonas.get(groupKey) || [];
-  const randomized = shuffleArray(personas);
+  const randomized = typeof reverseOrder === "boolean"
+    ? (reverseOrder ? [...personas].reverse() : [...personas]) : shuffleArray(personas);
   return randomized.map((persona, idx) => ({
     personaCsvId: Number(persona?.patient_id || idx + 1),
     order: idx + 1,
@@ -533,13 +534,28 @@ function buildPersonaRowsForGroup(groupedPersonas, groupKey) {
 }
 
 function buildBalancedBatchPlan(groupKeys) {
-  const groups = shuffleArray(groupKeys);
-  if (groups.length < 4) throw new Error("At least four persona groups are required.");
-  const participants = groups.map((_, index) => ({
-    groupAssignment: "experiment",
-    sessionGroupMap: Object.fromEntries([1, 2, 3, 4].map(n => [n, groups[(index + n - 1) % groups.length]]))
-  }));
-  return { batchSize: groups.length, totalParticipants: participants.length, participants };
+  if (groupKeys.length !== 4) throw new Error("Exactly four persona pairs are required.");
+  const participants = [];
+  for (const groupAssignment of ["experiment", "control"]) {
+    const groups = shuffleArray(groupKeys);
+    const sessionNumbers = groupAssignment === "control" ? [1, 4] : [1, 2, 3, 4];
+    const offsets = shuffleArray([0, 1, 2, 3]).slice(0, sessionNumbers.length);
+    const readingOrders = shuffleArray(["withdrawal_first", "withdrawal_first", "confrontation_first", "confrontation_first"]);
+    // Each pair has equal numbers of both internal orders within each arm.
+    const pairOrders = new Map(groups.map(key => [key,
+      shuffleArray(sessionNumbers.map((_, index) => Boolean(index % 2)))
+    ]));
+    for (let index = 0; index < groups.length; index += 1) {
+      const sessionGroupMap = Object.fromEntries(sessionNumbers.map((n, column) => [n, groups[(index + offsets[column]) % groups.length]]));
+      participants.push({
+        groupAssignment,
+        readingOrder: groupAssignment === "control" ? readingOrders[index] : null,
+        sessionGroupMap,
+        sessionReverseMap: Object.fromEntries(sessionNumbers.map(n => [n, pairOrders.get(sessionGroupMap[n]).pop()]))
+      });
+    }
+  }
+  return { batchSize: participants.length, totalParticipants: participants.length, participants: shuffleArray(participants) };
 }
 
 app.use("/api/admin", adminAuth);
@@ -584,13 +600,16 @@ app.post("/api/admin/invite-balanced-batch", async (req, res) => {
     const allPersonas = getAllPersonas();
     const groupedPersonas = groupPersonasByGroupKey(allPersonas);
     const groupKeys = Array.from(groupedPersonas.keys());
+    if (Array.from(groupedPersonas.values()).some(personas => personas.length !== 2)) {
+      throw new Error("Each persona group must contain exactly two personas.");
+    }
     const plan = buildBalancedBatchPlan(groupKeys);
 
     const origin = req.get("origin") || `${req.protocol}://${req.get("host")}`;
     const createdParticipants = [];
 
     for (const slot of plan.participants) {
-      const invite = await createInvite();
+      const invite = await createInvite({ groupAssignment: slot.groupAssignment, readingOrder: slot.readingOrder });
 
       const participantSessions = await listSessionsByParticipant(invite.participantId);
       for (const participantSession of participantSessions) {
@@ -599,7 +618,7 @@ app.post("/api/admin/invite-balanced-batch", async (req, res) => {
           || null;
         if (!assignedGroup) continue;
 
-        const personas = buildPersonaRowsForGroup(groupedPersonas, assignedGroup);
+        const personas = buildPersonaRowsForGroup(groupedPersonas, assignedGroup, slot.sessionReverseMap[participantSession.sessionNumber]);
         if (!personas.length) {
           throw new Error(`No personas available for group ${assignedGroup}.`);
         }
@@ -622,6 +641,7 @@ app.post("/api/admin/invite-balanced-batch", async (req, res) => {
       createdParticipants.push({
         participantCode: invite.participantCode,
         groupAssignment: slot.groupAssignment,
+        readingOrder: slot.readingOrder,
         sessionGroupMap: slot.sessionGroupMap,
         sessions
       });
