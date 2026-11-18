@@ -555,7 +555,10 @@ function buildBalancedBatchPlan(groupKeys) {
       });
     }
   }
-  return { batchSize: participants.length, totalParticipants: participants.length, participants: shuffleArray(participants) };
+  const experiment = participants.filter(p => p.groupAssignment === "experiment");
+  const control = participants.filter(p => p.groupAssignment === "control");
+  return { batchSize: participants.length, totalParticipants: participants.length,
+    participants: experiment.flatMap((participant, index) => [participant, control[index]]) };
 }
 
 app.use("/api/admin", adminAuth);
@@ -662,7 +665,7 @@ app.post("/api/admin/invite-balanced-batch", async (req, res) => {
 app.get("/api/admin/session-options", (_req, res) => {
   try {
     res.json({
-      groups: [{ key: "experiment", label: "Experiment" }, { key: "control", label: "Control" }]
+      groups: [{ key: "experiment", label: "ניסוי" }, { key: "control", label: "ביקורת" }]
     });
   } catch (error) {
     console.error("Failed to load session options", error);

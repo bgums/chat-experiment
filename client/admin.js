@@ -234,7 +234,7 @@ function renderSubjectsPanel() {
           ${idx === 0 ? (() => {
             const dtValue = escapeHtml(toDatetimeLocal(participant.scheduleStart || ''));
             const subj = escapeHtml(participant.subjectId || 'מזהה נבדק');
-            const groupLabel = participant.groupAssignment === 'experiment' ? 'ניסוי' : participant.groupAssignment;
+            const groupLabel = participant.groupAssignment === 'experiment' ? 'ניסוי' : participant.groupAssignment === 'control' ? 'ביקורת' : participant.groupAssignment;
             return `<td rowspan="${sessions.length}">
                 <div style="display:flex;flex-direction:column;gap:6px;">
                   <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
@@ -572,11 +572,22 @@ function renderSplitPieCharts(container, items, keyLabel, keyValue) {
   });
 }
 
+function alternateParticipantGroups(items) {
+  const experiment = items.filter(p => p.groupAssignment === "experiment");
+  const control = items.filter(p => p.groupAssignment === "control");
+  const ordered = [];
+  for (let index = 0; index < Math.max(experiment.length, control.length); index += 1) {
+    if (experiment[index]) ordered.push(experiment[index]);
+    if (control[index]) ordered.push(control[index]);
+  }
+  return [...ordered, ...items.filter(p => !["experiment", "control"].includes(p.groupAssignment))];
+}
+
 async function loadParticipants() {
   const response = await fetch("/api/admin/participants");
   if (!response.ok) throw new Error("Failed to load participants");
   const data = await response.json();
-  participants = data.participants || [];
+  participants = alternateParticipantGroups(data.participants || []);
   renderSubjectsPanel();
 }
 

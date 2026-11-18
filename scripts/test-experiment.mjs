@@ -285,6 +285,7 @@ try {
   assert.equal((await all("SELECT * FROM practice_attempts")).length, 0);
   const batch = await api("/api/admin/invite-balanced-batch", {});
   assert.equal(batch.totalParticipants, 8);
+  assert.deepEqual(batch.participants.map(p => p.groupAssignment), ["experiment", "control", "experiment", "control", "experiment", "control", "experiment", "control"]);
   assert.equal(batch.smallestBalancedBatch, 8);
   for (const arm of ["experiment", "control"]) {
     const members = batch.participants.filter(p => p.groupAssignment === arm);
