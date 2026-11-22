@@ -32,26 +32,19 @@ const exportSessionsButton = document.getElementById("export-sessions-csv");
 let chartInstances = [];
 let currentParticipantDetails = null;
 const _saveTimers = new Map();
-const EXPERIMENT_TZ_OFFSET_MINUTES = 3 * 60;
+const EXPERIMENT_TIMEZONE = "Asia/Jerusalem";
+const experimentClock = new Intl.DateTimeFormat("en-CA", {
+  timeZone: EXPERIMENT_TIMEZONE, year: "numeric", month: "2-digit", day: "2-digit",
+  hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23"
+});
 
-function pad2(value) {
-  return String(value).padStart(2, "0");
-}
-
-function pad3(value) {
-  return String(value).padStart(3, "0");
+function experimentDateParts(date) {
+  return Object.fromEntries(experimentClock.formatToParts(date).map(({ type, value }) => [type, value]));
 }
 
 function isoInExperimentTimezone(date) {
-  const shifted = new Date(date.getTime() + EXPERIMENT_TZ_OFFSET_MINUTES * 60 * 1000);
-  const year = shifted.getUTCFullYear();
-  const month = pad2(shifted.getUTCMonth() + 1);
-  const day = pad2(shifted.getUTCDate());
-  const hours = pad2(shifted.getUTCHours());
-  const minutes = pad2(shifted.getUTCMinutes());
-  const seconds = pad2(shifted.getUTCSeconds());
-  const millis = pad3(shifted.getUTCMilliseconds());
-  return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}.${millis}+03:00`;
+  // Store an unambiguous instant; display it in Israel's timezone separately.
+  return date.toISOString();
 }
 
 async function saveParticipantMetadata(participantId, subjectId, notes, scheduleStart) {
@@ -123,8 +116,8 @@ function toDatetimeLocal(iso) {
   if (!iso) return "";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
-  const shifted = new Date(d.getTime() + EXPERIMENT_TZ_OFFSET_MINUTES * 60 * 1000);
-  return `${shifted.getUTCFullYear()}-${pad2(shifted.getUTCMonth() + 1)}-${pad2(shifted.getUTCDate())}T${pad2(shifted.getUTCHours())}:${pad2(shifted.getUTCMinutes())}`;
+  const parts = experimentDateParts(d);
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
 }
 
 function toIsoFromLocal(local) {
@@ -132,17 +125,26 @@ function toIsoFromLocal(local) {
   const match = String(local).match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/);
   if (!match) return null;
   const [, y, m, d, hh, mm] = match;
-  const utcMs = Date.UTC(Number(y), Number(m) - 1, Number(d), Number(hh), Number(mm))
-    - EXPERIMENT_TZ_OFFSET_MINUTES * 60 * 1000;
-  if (!Number.isFinite(utcMs)) return null;
-  return isoInExperimentTimezone(new Date(utcMs));
+  const wallTime = Date.UTC(Number(y), Number(m) - 1, Number(d), Number(hh), Number(mm));
+  let utcMs = wallTime;
+  // Resolve Israel wall time without depending on the computer's timezone.
+  for (let i = 0; i < 3; i += 1) {
+    const parts = experimentDateParts(new Date(utcMs));
+    const displayed = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), Number(parts.hour), Number(parts.minute));
+    const correction = wallTime - displayed;
+    if (!correction) break;
+    utcMs += correction;
+  }
+  const result = isoInExperimentTimezone(new Date(utcMs));
+  // Reject nonexistent local times during the spring clock change.
+  return toDatetimeLocal(result) === local ? result : null;
 }
 
 function formatDateTime(value) {
   if (!value) return "";
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return String(value);
-  return parsed.toLocaleString("he-IL", { timeZone: "Etc/GMT-3" });
+  return parsed.toLocaleString("he-IL", { timeZone: EXPERIMENT_TIMEZONE });
 }
 
 function computeSessionScheduledFor(scheduleStart, sessionNumber) {
@@ -323,10 +325,11 @@ exportSessionsButton?.addEventListener("click", () => {
     return sessions.map((session) => [
       participant.subjectId ?? "",
       getSessionScheduledTime(participant, session),
+      `לינק למפגש ${session.sessionNumber} - ניסוי "איך עובדים עם מטופלים? רכישת מיומנויות טיפוליות"`,
       buildSessionEmail(participant, session)
     ]);
   });
-  const csv = ["subject_id,Scheduled_Time,email_content", ...rows.map((row) => (
+  const csv = ["subject_id,Scheduled_Time,email_subject,email_content", ...rows.map((row) => (
     row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(",")
   ))].join("\r\n");
   const url = URL.createObjectURL(new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" }));

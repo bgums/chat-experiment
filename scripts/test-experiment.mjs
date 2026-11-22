@@ -56,6 +56,21 @@ for (const [score, label] of [[1, "טעון שיפור"], [3, "ביצוע טוב
 
 const temp = await mkdtemp(path.join(os.tmpdir(), "repair-experiment-"));
 const adminSource = await readFile("client/admin.js", "utf8");
+const adminTime = vm.runInNewContext(
+  adminSource.slice(adminSource.indexOf('const EXPERIMENT_TIMEZONE'), adminSource.indexOf('async function saveParticipantMetadata')) +
+  adminSource.slice(adminSource.indexOf('function toDatetimeLocal('), adminSource.indexOf('function computeStatus(')) +
+  '\n({ toDatetimeLocal, toIsoFromLocal, formatDateTime })', { Date, Intl });
+for (const [instant, local] of [
+  ['2026-11-22T10:00:00Z', '2026-11-22T12:00'],
+  ['2026-07-22T09:00:00Z', '2026-07-22T12:00'],
+  ['2026-11-22T13:00:00+03:00', '2026-11-22T12:00'],
+  ['2026-11-22T22:30:00Z', '2026-11-23T00:30']
+]) {
+  assert.equal(adminTime.toDatetimeLocal(instant), local);
+  assert.equal(Date.parse(adminTime.toIsoFromLocal(local)), Date.parse(instant));
+  assert.equal(adminTime.formatDateTime(instant), new Date(instant).toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' }));
+}
+assert.equal(adminTime.toIsoFromLocal('2026-03-27T02:30'), null);
 const computeStatus = vm.runInNewContext(adminSource.slice(adminSource.indexOf("function computeStatus("), adminSource.indexOf("function renderStatus(")) + "\ncomputeStatus", { Date });
 assert.equal(computeStatus({}).key, "upcoming");
 assert.equal(computeStatus({ status: "completed" }).key, "completed");
