@@ -803,8 +803,8 @@ async function updateScheduleLockByToken(token, scheduleLockDisabled) {
   }
 
   const stateText = payload?.scheduleLockDisabled
-    ? "הנעילה האוטומטית אחרי 24 שעות כבויה"
-    : "הנעילה האוטומטית אחרי 24 שעות פעילה";
+    ? "הנעילה האוטומטית אחרי 25 שעות כבויה"
+    : "הנעילה האוטומטית אחרי 25 שעות פעילה";
   setManagementMessage(`Session ${escapeHtml(payload.sessionNumber)} (${escapeHtml(payload.participantCode)}): ${stateText}`, false, true);
 }
 
