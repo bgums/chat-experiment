@@ -217,19 +217,19 @@ try {
     await api(url + "/attempt", {}, 403, { "X-Session-View-Only": "1" });
     await api(url + "/attempt", { roundId: initial.id, attemptNumber: 2, message: "test" }, 409);
     const capped = persona === personas[0];
-    for (let n = 1; n <= 3; n++) {
+    for (let n = 1; n <= 2; n++) {
       data = await api(url + "/attempt", { roundId: initial.id, attemptNumber: n, message: capped ? "retry" : "אני מבין את הקושי" });
       assert.equal(data.rounds[0].attempts.length, n);
-      assert.equal(Boolean(data.rounds[0].attempts.at(-1).patient_message), initial.config.practiceMode === "continuing" && n < 3);
+      assert.equal(Boolean(data.rounds[0].attempts.at(-1).patient_message), initial.config.practiceMode === "continuing" && n < 2);
       assert.equal(data.rounds[0].attempts.at(-1).score, capped ? 1 : 3);
       assert.equal("patient_message" in data.rounds[0].attempts.at(-1), initial.config.practiceMode === "continuing");
       assert.ok(!("sufficient" in data.rounds[0].attempts.at(-1)));
-      assert.equal(data.rounds[0].status, n < 3 ? "active" : "attempt_limit");
-      if (n < 3) await api(`/api/session/${token}/complete`, {}, 400);
+      assert.equal(data.rounds[0].status, n < 2 ? "active" : "attempt_limit");
+      if (n < 2) await api(`/api/session/${token}/complete`, {}, 400);
     }
-    data = await api(url + "/attempt", { roundId: initial.id, attemptNumber: 3, message: capped ? "retry" : "אני מבין את הקושי" });
-    assert.equal(data.rounds[0].attempts.length, 3);
-    await api(url + "/attempt", { roundId: initial.id, attemptNumber: 4, message: "retry" }, 409);
+    data = await api(url + "/attempt", { roundId: initial.id, attemptNumber: 2, message: capped ? "retry" : "אני מבין את הקושי" });
+    assert.equal(data.rounds[0].attempts.length, 2);
+    await api(url + "/attempt", { roundId: initial.id, attemptNumber: 3, message: "retry" }, 409);
     data = await api(url + "/start", {});
     assert.equal(data.rounds.length, 2);
     const second = data.rounds[1];
@@ -242,8 +242,6 @@ try {
     assert.equal(data.rounds[1].attempts[0].score, 5);
     assert.ok(data.rounds[1].attempts[0].hint);
     data = await api(url + "/attempt", { roundId: second.id, attemptNumber: 2, message: "excellent response" });
-    assert.equal(data.rounds[1].status, "active");
-    data = await api(url + "/attempt", { roundId: second.id, attemptNumber: 3, message: "excellent response" });
     assert.equal(data.rounds[1].status, "attempt_limit");
     assert.equal((await api(url + "/start", {})).rounds.length, 2);
   }
@@ -285,11 +283,11 @@ try {
   assert.equal(restarted.attempts.length, 0);
   assert.equal(restarted.round_number, 1);
   assert.equal((await all("SELECT * FROM practice_attempts WHERE round_id = ?", [oldRound.id])).length, oldRound.attempts.length);
-  assert.equal((await api(practiceUrl(personas[1]))).rounds[0].attempts.length, 3);
+  assert.equal((await api(practiceUrl(personas[1]))).rounds[0].attempts.length, 2);
   await api(restartUrl + "/attempt", { roundId: oldRound.id, attemptNumber: 1, message: "stale" }, 409);
-  for (let n = 1; n <= 3; n++) await api(restartUrl + "/attempt", { roundId: restarted.id, attemptNumber: n, message: "תגובה חלופית" });
+  for (let n = 1; n <= 2; n++) await api(restartUrl + "/attempt", { roundId: restarted.id, attemptNumber: n, message: "תגובה חלופית" });
   const restartSecond = (await api(restartUrl + "/start", {})).rounds[1];
-  for (let n = 1; n <= 3; n++) {
+  for (let n = 1; n <= 2; n++) {
     await api(restartUrl + "/attempt", { roundId: restartSecond.id, attemptNumber: n, message: "excellent response" });
   }
   await api(`/api/session/${token}/complete`, {});
@@ -340,7 +338,7 @@ try {
     assert.ok([...firstPersonaCounts.values()].every(count => count === (arm === "control" ? 1 : 2)));
   }
   assert.doesNotMatch(logs, /SQLITE_ERROR|Failed to add|Could not remove/);
-  console.log("PASS: flow, experiment group, practice selection, two strategies, original practice and category coverage, continued practice after score 5, three-attempt cap, restart, legacy flag removal, persistence, ownership, read-only, completion, export, reset, balanced allocation");
+  console.log("PASS: flow, experiment group, practice selection, two strategies, original practice and category coverage, continued practice after score 5, two-attempt cap, restart, legacy flag removal, persistence, ownership, read-only, completion, export, reset, balanced allocation");
 } finally {
   if (db) await new Promise(resolve => db.close(resolve));
   child.kill();

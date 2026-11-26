@@ -44,7 +44,7 @@ is normalized to experiment). Missing control reading orders are assigned on mig
 | `server/instructions/deliberate_practice_selection.txt` | **Dedicated location for your selection prompt**; contains a working draft |
 | `server/instructions/deliberate_practice_evaluation.txt` | Verbal attempt feedback; receives score, successful, strategyComplete and nextAction |
 | `server/instructions/deliberate_practice_score.txt` | Separate study-adapted quality score for the original response and each attempt |
-| `server/config/deliberatePractice.json` | `maxAttemptsPerStrategy`: **3**; `strategiesPerChat`: **2**; `showScoresToParticipant`: **true** for current testing |
+| `server/config/deliberatePractice.json` | `maxAttemptsPerStrategy`: **2**; `strategiesPerChat`: **2**; `showScoresToParticipant`: **true** for current testing |
 
 Restart after editing prompts/configuration. The first round snapshots the attempt
 limit and model for that conversation. The current strategy count and score visibility
@@ -63,7 +63,7 @@ repetition across sessions.
 The participant sees three original messages in the order
 therapist → patient → therapist, followed by feedback and hint in matching coaching cards. They write a replacement for
 the last therapist response. The original response is excluded from the rehearsal
-model's dialogue context. Each strategy ends after three new therapist attempts. The
+model's dialogue context. Each strategy ends after two new therapist attempts. The
 first strategy rehearses the original approach, and the second uses the same excerpt
 to rehearse a different category. Across the two personas, alternative categories
 cannot repeat. Selection prioritizes categories that add coverage to the current
